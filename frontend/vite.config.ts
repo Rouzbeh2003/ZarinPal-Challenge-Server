@@ -9,9 +9,9 @@ export default defineConfig({
   server: {
     proxy: {
       // درخواست‌های API به Backend محلی (Docker) هدایت می‌شوند؛
-      // session cookie و CSRF به‌درستی کار می‌کند.
+      // مقدار پیش‌فرض با Backend محلی هماهنگ است و از env قابل تغییر است.
       "/api": {
-        target: "http://localhost:8000",
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

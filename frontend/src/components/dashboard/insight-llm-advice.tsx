@@ -32,7 +32,7 @@ function toDisplay(value: unknown): string {
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
     const candidate =
-      record["action"] ?? record["why"] ?? record["reason"] ?? record["title"] ?? record["text"] ?? record["content"];
+      record["action"] ?? record["need"] ?? record["why"] ?? record["reason"] ?? record["title"] ?? record["text"] ?? record["content"];
     if (typeof candidate === "string") return candidate;
     try {
       return JSON.stringify(value);
@@ -79,11 +79,11 @@ export function InsightLlmAdvice({ insight }: InsightLlmAdviceProps) {
         ? `impact=${insight.financialImpact.amount.toLocaleString("fa-IR")} IRR`
         : "impact=none(improvement)";
     const question = (
-      `You are a merchant payment advisor. Evidence: "${insight.summary}" ` +
+      `به‌عنوان مشاور جامع پذیرنده، فقط روی موفقیت پرداخت تمرکز نکن. Evidence: "${insight.summary}" ` +
       `rate ${(insight.metric.baseline * 100).toFixed(1)}% -> ${(insight.metric.current * 100).toFixed(1)}%; ` +
       `drivers: ${driversText || "none"}; ${impactText}. ` +
-      `Give 3 concrete, merchant-specific actions (e.g. reroute terminal T59 to PSP-02), each with why and risk. ` +
-      `Reply JSON: {answer, key_findings, next_actions:[{action, why}], caveats}.`
+      `نیازهای آینده پذیرنده، فرصت رشد، تجربه مشتری، عملیات و ریسک را با شواهد موجود تحلیل کن. ` +
+      `اقدام‌های قابل سنجش با KPI و guardrail بده؛ نیازهای فاقد داده را فرضیه بنام.`
     );
     // backend سؤال را حداکثر ۱۰۰۰ کاراکتر می‌پذیرد.
     return question.slice(0, 900);
@@ -167,6 +167,16 @@ export function InsightLlmAdvice({ insight }: InsightLlmAdviceProps) {
                 </ul>
               </div>
             )}
+          {adviceState.narrative.predicted_needs !== undefined && adviceState.narrative.predicted_needs.length > 0 && (
+            <div>
+              <p className="mb-1 text-sm font-medium">نیازهای پیش‌بینی‌شده پذیرنده</p>
+              <ul className="flex flex-col gap-2 text-sm leading-6">
+                {adviceState.narrative.predicted_needs.map((need, index) => (
+                  <li key={toKey(need, index)} className="rounded-lg border border-border p-3">{toDisplay(need)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {adviceState.narrative.caveats !== undefined && adviceState.narrative.caveats.length > 0 && (
             <div className="rounded-lg border border-dashed border-border p-3">
               <p className="mb-1 text-xs font-medium text-muted-foreground">نکات احتیاطی</p>

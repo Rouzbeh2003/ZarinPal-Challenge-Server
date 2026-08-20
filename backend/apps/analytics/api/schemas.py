@@ -41,6 +41,8 @@ class AdvisorResponse(Schema):
     overview: dict[str, Any]
     dimensions: dict[str, list[dict[str, Any]]]
     retry: dict[str, Any]
+    trends: dict[str, Any]
+    predicted_needs: list[dict[str, Any]]
     recommendations: list[dict[str, Any]]
     advisor_narrative: dict[str, Any] | None
     narrative_source: str

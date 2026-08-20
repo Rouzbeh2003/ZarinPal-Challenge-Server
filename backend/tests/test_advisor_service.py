@@ -33,7 +33,9 @@ def test_advisor_builds_aggregate_recommendations_and_grounded_narrative(tmp_pat
     assert report["narrative_source"] == "llm"
     assert report["advisor_narrative"]["answer"].startswith("ابتدا")
     assert report["recommendations"][0]["code"] == "reduce_no_attempt"
-    assert report["methodology"]["claims"] == "descriptive_association_not_causation"
+    assert report["methodology"]["claims"] == "forecasted_needs_are_ranked_hypotheses_not_causation"
+    assert report["predicted_needs"][0]["code"] == "checkout_experience"
+    assert "trends" in report
 
 
 def test_advisor_returns_complete_deterministic_report_when_llm_fails(tmp_path: Path) -> None:
