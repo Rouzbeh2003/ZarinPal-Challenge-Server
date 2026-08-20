@@ -5,12 +5,13 @@ from enum import StrEnum
 
 class SessionStatus(StrEnum):
     SUCCESSFUL = "successful"
+    PENDING_VERIFICATION = "pending_verification"
     UNSUCCESSFUL = "unsuccessful"
     REVERSED = "reversed"
     EXCLUDED = "excluded"
 
 
-SUCCESS_STATUSES = frozenset({"verified", "paid"})
+SUCCESS_STATUSES = frozenset({"verified"})
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class SessionSummary:
     amount: int
     final_status: SessionStatus
     is_successful: bool
+    is_paid_unverified: bool
     is_reversed: bool
     attempts_count: int
     has_real_attempt: bool
@@ -56,6 +58,7 @@ def summarize_session(attempts: list[Attempt]) -> SessionSummary:
         amount=ordered_attempts[0].amount,
         final_status=final_status,
         is_successful=final_status is SessionStatus.SUCCESSFUL,
+        is_paid_unverified=final_status is SessionStatus.PENDING_VERIFICATION,
         is_reversed=final_status is SessionStatus.REVERSED,
         attempts_count=len(real_attempts),
         has_real_attempt=bool(real_attempts),
@@ -70,6 +73,8 @@ def resolve_final_status(attempts: list[Attempt]) -> SessionStatus:
         return SessionStatus.REVERSED
     if statuses & SUCCESS_STATUSES:
         return SessionStatus.SUCCESSFUL
+    if "paid" in statuses:
+        return SessionStatus.PENDING_VERIFICATION
     if all(attempt.amount <= 0 for attempt in attempts):
         return SessionStatus.EXCLUDED
     return SessionStatus.UNSUCCESSFUL

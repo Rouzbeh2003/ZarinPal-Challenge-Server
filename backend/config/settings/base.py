@@ -63,3 +63,7 @@ ANALYTICS_DATABASE_PATH = Path(
 ANALYTICS_MEMORY_LIMIT = os.getenv("ANALYTICS_MEMORY_LIMIT", "2GB")
 ANALYTICS_THREADS = int(os.getenv("ANALYTICS_THREADS", "4"))
 ENABLE_DEMO_AUTH = os.getenv("ENABLE_DEMO_AUTH", "false").lower() == "true"
+LLM_API_URL = os.getenv("LLM_API_URL", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "15"))

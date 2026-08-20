@@ -30,6 +30,8 @@ class MetricsService:
                count(*) FILTER (WHERE final_status = 'excluded') AS excluded_sessions,
                count(*) FILTER (WHERE is_successful) AS successful_sessions,
                coalesce(sum(amount) FILTER (WHERE is_successful), 0)::BIGINT AS successful_amount,
+               count(*) FILTER (WHERE final_status = 'pending_verification') AS paid_unverified_sessions,
+               coalesce(sum(amount) FILTER (WHERE final_status = 'pending_verification'), 0)::BIGINT AS paid_unverified_amount,
                coalesce(sum(amount) FILTER (WHERE final_status = 'unsuccessful'), 0)::BIGINT AS potential_lost_amount,
                count(*) FILTER (WHERE NOT has_real_attempt) AS no_attempt_sessions
         FROM session_fact WHERE {where_sql}
@@ -40,6 +42,7 @@ class MetricsService:
         return {
             **row,
             "success_rate": _safe_ratio(successful, valid),
+            "paid_unverified_rate": _safe_ratio(int(row.get("paid_unverified_sessions", 0)), valid),
             "no_attempt_rate": _safe_ratio(int(row.get("no_attempt_sessions", 0)), valid),
             "currency": "IRR",
             "metric_version": METRIC_VERSION,

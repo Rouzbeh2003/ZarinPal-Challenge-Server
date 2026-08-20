@@ -30,6 +30,23 @@ class MetricFilters(Schema):
         return self
 
 
+class AdvisorRequest(MetricFilters):
+    question: str | None = Field(default=None, max_length=1000)
+
+
+class AdvisorResponse(Schema):
+    merchant_key: str
+    period: dict[str, date]
+    executive_summary: list[str]
+    overview: dict[str, Any]
+    dimensions: dict[str, list[dict[str, Any]]]
+    retry: dict[str, Any]
+    recommendations: list[dict[str, Any]]
+    advisor_narrative: dict[str, Any] | None
+    narrative_source: str
+    methodology: dict[str, str]
+
+
 class HealthResponse(Schema):
     status: str
     postgres: str
@@ -77,9 +94,12 @@ class OverviewResponse(Schema):
     valid_sessions: int
     successful_sessions: int
     successful_amount: int
+    paid_unverified_sessions: int
+    paid_unverified_amount: int
     potential_lost_amount: int
     no_attempt_sessions: int
     success_rate: float | None
+    paid_unverified_rate: float | None
     no_attempt_rate: float | None
     currency: str
     metric_version: str

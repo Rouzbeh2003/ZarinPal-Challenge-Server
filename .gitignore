@@ -10,6 +10,6 @@ backend/data/processed/*
 backend/data/warehouse/*
 !backend/data/**/.gitkeep
 *.duckdb
+*.sqlite3
 *.parquet
 other_challenge_data.csv.gz
-

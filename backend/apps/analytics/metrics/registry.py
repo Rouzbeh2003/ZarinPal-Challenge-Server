@@ -12,7 +12,7 @@ class MetricDefinition:
     minimum_sample_size: int
 
 
-METRIC_VERSION = "1.0.0"
+METRIC_VERSION = "2.0.0"
 METRICS = {
     "successful_amount": MetricDefinition(
         "successful_amount",
@@ -26,9 +26,18 @@ METRICS = {
     "success_rate": MetricDefinition(
         "success_rate",
         METRIC_VERSION,
-        "Successful valid sessions divided by all valid sessions. Verified and Paid are assumed successful; Reversed is excluded from sales.",
+        "Verified sessions divided by all valid sessions. Paid without merchant verification is reported separately; Reversed is excluded from sales.",
         "session",
         "successful valid sessions",
+        "all valid sessions",
+        1,
+    ),
+    "paid_unverified_rate": MetricDefinition(
+        "paid_unverified_rate",
+        METRIC_VERSION,
+        "Sessions debited by the bank but not verified by the merchant, divided by all valid sessions.",
+        "session",
+        "sessions with final status Paid",
         "all valid sessions",
         1,
     ),

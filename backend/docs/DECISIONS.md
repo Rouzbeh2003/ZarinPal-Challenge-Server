@@ -2,7 +2,10 @@
 
 ## Successful status assumption
 
-Until the payment status contract is confirmed, `Verified` and `Paid` are treated as successful. `Reversed` has precedence and is never counted as a normal sale. This assumption is versioned with metric version `1.0.0`.
+The supplied data guide defines `Verified` as the final complete sale. `Paid` means the bank debited
+the card but the merchant has not verified the payment, so it is tracked as `pending_verification`
+and is not included in successful sales. `Reversed` has precedence and is never counted as a normal
+sale. This contract is versioned with metric version `2.0.0`.
 
 ## Invalid sessions
 
@@ -15,3 +18,10 @@ The default baseline is the immediately preceding equal-length period. A success
 Financial impact for a decline is the positive difference between expected successful sessions at the baseline rate and actual successful sessions, multiplied by the current period's average successful-session amount. It is labelled potential impact, not confirmed loss.
 
 Drivers rank observed segment-level rate changes by absolute rate change times current segment volume. They are associative diagnostics and do not establish causality. Only dimensions present at session grain are evaluated. Customer, switch-response, and verify-type drivers remain unavailable until those fields are materialized safely in `session_fact`.
+
+## LLM advisory boundary
+
+The metric and recommendation engines remain the source of truth. The optional LLM receives only
+aggregate, session-grain evidence and may explain or prioritize it; it does not calculate metrics.
+No session key or payer-card identifier crosses this boundary. A provider failure returns the full
+deterministic report with `narrative_source=deterministic_engine_fallback`.

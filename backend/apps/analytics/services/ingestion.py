@@ -164,8 +164,8 @@ class IngestionService:
         WHERE (try_created_at < created_at) OR (verified_at < created_at) OR (settled_at < created_at)
         UNION ALL
         SELECT ?, session_key, try_seq, 'unknown_status' FROM attempt_fact
-        WHERE lower(coalesce(session_status, '')) NOT IN ('verified', 'paid', 'failed', 'reversed', 'expired')
-           OR lower(coalesce(try_status, '')) NOT IN ('verified', 'paid', 'failed', 'reversed', 'expired', 'inbank', 'noattempt')
+        WHERE lower(coalesce(session_status, '')) NOT IN ('verified', 'paid', 'failed', 'reversed')
+           OR lower(coalesce(try_status, '')) NOT IN ('verified', 'paid', 'failed', 'reversed', 'inbank', 'noattempt')
         """,
             [dataset_version] * 8,
         )
@@ -196,39 +196,46 @@ class IngestionService:
                    min(category_id) AS category_id,
                    min(amount) AS amount,
                    CASE WHEN bool_or(lower(session_status) = 'reversed') THEN 'reversed'
-                        WHEN bool_or(lower(session_status) IN ('verified', 'paid')) THEN 'successful'
+                        WHEN bool_or(lower(session_status) = 'verified') THEN 'successful'
+                        WHEN bool_or(lower(session_status) = 'paid') THEN 'pending_verification'
                         WHEN min(amount) <= 0 OR session_key IN (SELECT session_key FROM invalid_sessions) THEN 'excluded'
                         ELSE 'unsuccessful' END AS final_status,
                    count(*) FILTER (WHERE try_seq > 0 AND lower(try_status) != 'noattempt') AS attempts_count,
                    max(try_seq) AS max_try_seq,
                    bool_or(try_seq > 0 AND lower(try_status) != 'noattempt') AS has_real_attempt,
-                   bool_or(lower(try_status) = 'inbank') AS has_bank_entry,
+                   bool_or(lower(try_status) IN ('inbank', 'paid', 'verified', 'reversed')) AS has_bank_entry,
                    count(*) FILTER (WHERE try_seq > 0 AND lower(try_status) != 'noattempt') > 1 AS has_retry,
                    coalesce(
                        min(attempt.try_seq) FILTER (
-                           WHERE lower(try_status) IN ('verified', 'paid')
+                           WHERE lower(try_status) = 'verified'
                        ) > min(attempt.try_seq) FILTER (
-                           WHERE lower(try_status) NOT IN ('verified', 'paid', 'noattempt')
+                           WHERE lower(try_status) NOT IN ('verified', 'noattempt')
                        ) AND count(*) FILTER (
                            WHERE attempt.try_seq > 0 AND lower(try_status) != 'noattempt'
                        ) > 1,
                        false
                    ) AS recovered_after_retry,
-                   min(coalesce(try_created_at, created_at)) AS first_attempt_at,
-                   max(coalesce(try_created_at, created_at)) AS last_attempt_at,
+                   min(created_at) AS session_created_at,
+                   min(try_created_at) FILTER (WHERE try_seq > 0 AND lower(try_status) != 'noattempt') AS first_attempt_at,
+                   max(try_created_at) FILTER (WHERE try_seq > 0 AND lower(try_status) != 'noattempt') AS last_attempt_at,
                    max(verified_at) AS verified_at, max(settled_at) AS settled_at,
                    arg_max(psp_code, coalesce(try_created_at, created_at)) AS final_psp_code,
                    arg_max(issuer_bank_code, coalesce(try_created_at, created_at)) AS final_issuer_bank_code,
                    arg_max(payer_card_key, coalesce(try_created_at, created_at)) AS payer_card_key,
+                   arg_max(switch_response_code, coalesce(try_created_at, created_at)) AS final_switch_response_code,
+                   arg_max(verify_type, coalesce(try_created_at, created_at)) AS verify_type,
+                   max(init_time_ms) AS init_time_ms,
+                   max(verify_time_ms) AS verify_time_ms,
                    any_value(issue.data_quality_flags) AS data_quality_flags
             FROM deduplicated AS attempt
             LEFT JOIN session_issues AS issue USING (session_key)
             GROUP BY attempt.session_key
         )
         SELECT *, final_status = 'successful' AS is_successful,
+               final_status = 'pending_verification' AS is_paid_unverified,
                final_status = 'reversed' AS is_reversed,
-               date(first_attempt_at) AS metric_date,
-               date_diff('millisecond', first_attempt_at, coalesce(verified_at, last_attempt_at)) AS completion_time_ms,
+               date(session_created_at) AS metric_date,
+               date_diff('millisecond', session_created_at, coalesce(verified_at, last_attempt_at, session_created_at)) AS completion_time_ms,
                CASE WHEN amount < 1000000 THEN 'under_1m'
                     WHEN amount < 10000000 THEN '1m_to_10m'
                     WHEN amount < 100000000 THEN '10m_to_100m'
@@ -250,6 +257,8 @@ class IngestionService:
                count(*) FILTER (WHERE final_status != 'excluded') AS valid_sessions,
                count(*) FILTER (WHERE is_successful) AS successful_sessions,
                sum(amount) FILTER (WHERE is_successful)::HUGEINT AS successful_amount,
+               count(*) FILTER (WHERE is_paid_unverified) AS paid_unverified_sessions,
+               sum(amount) FILTER (WHERE is_paid_unverified)::HUGEINT AS paid_unverified_amount,
                count(*) FILTER (WHERE NOT has_real_attempt) AS no_attempt_sessions,
                count(*) FILTER (WHERE has_retry) AS retried_sessions,
                count(*) FILTER (WHERE recovered_after_retry) AS recovered_sessions,

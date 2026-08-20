@@ -19,6 +19,7 @@ def test_golden_ingestion_reconciles_session_metrics(tmp_path: Path) -> None:
         _row("S2", "0", "Failed", "NoAttempt", "3000000"),
         _row("S3", "1", "Verified", "Verified", "2000000"),
         _row("S4", "1", "Reversed", "Reversed", "1000000"),
+        _row("S5", "1", "Paid", "Paid", "4000000"),
     ]
     with gzip.open(source_path, "wt", encoding="utf-8", newline="") as source_file:
         writer = csv.DictWriter(source_file, fieldnames=list(REQUIRED_COLUMNS))
@@ -29,12 +30,17 @@ def test_golden_ingestion_reconciles_session_metrics(tmp_path: Path) -> None:
     with override_settings(ANALYTICS_DATABASE_PATH=database_path):
         result = IngestionService(repository).ingest(source_path)
     totals = repository.fetch_one(
-        "SELECT count(*) AS sessions, sum(amount) FILTER (WHERE is_successful) AS successful_amount, count(*) FILTER (WHERE recovered_after_retry) AS recovered FROM session_fact"
+        "SELECT count(*) AS sessions, sum(amount) FILTER (WHERE is_successful) AS successful_amount, count(*) FILTER (WHERE recovered_after_retry) AS recovered, count(*) FILTER (WHERE is_paid_unverified) AS paid_unverified FROM session_fact"
     )
 
-    assert result.rows_read == 5
-    assert result.sessions_created == 4
-    assert totals == {"sessions": 4, "successful_amount": 7_000_000, "recovered": 1}
+    assert result.rows_read == 6
+    assert result.sessions_created == 5
+    assert totals == {
+        "sessions": 5,
+        "successful_amount": 7_000_000,
+        "recovered": 1,
+        "paid_unverified": 1,
+    }
 
 
 def _row(

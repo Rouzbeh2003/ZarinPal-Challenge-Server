@@ -16,6 +16,16 @@ def test_session_amount_is_counted_once_when_payment_has_multiple_attempts() -> 
     assert session.final_status is SessionStatus.SUCCESSFUL
 
 
+def test_paid_without_verified_is_pending_and_not_a_successful_sale() -> None:
+    session = summarize_session(
+        [Attempt(try_seq=1, try_status="Paid", session_status="Paid", amount=5_000_000)]
+    )
+
+    assert session.final_status is SessionStatus.PENDING_VERIFICATION
+    assert session.is_successful is False
+    assert session.is_paid_unverified is True
+
+
 def test_no_attempt_is_not_treated_as_real_payment_attempt() -> None:
     session = summarize_session(
         [Attempt(try_seq=0, try_status="NoAttempt", session_status="Failed", amount=1_000_000)]

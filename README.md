@@ -11,6 +11,8 @@ Backend analytics and explainable Insight Engine for merchant payment attempts.
 - Data-quality issues with explicit reasons
 - Overview, payment health, funnel, retry, merchant list, and latest quality APIs
 - Versioned success-rate change detection with equal-period baselines, sample and significance checks
+- Multi-dimensional merchant advisor across amount, hour, weekday, PSP, bank, and terminal
+- Optional grounded LLM narrative with aggregate-only evidence and deterministic fallback
 - Financial-impact estimates, associative driver breakdowns, recommendations, trace, and masked evidence
 - Unit, authorization, ingestion, golden-number, and reconciliation tests
 
@@ -73,6 +75,7 @@ The ingestion API is additionally restricted to staff. For the 61 MB source file
 - `GET /api/v1/merchants/{merchant_key}/payment-health`
 - `GET /api/v1/merchants/{merchant_key}/funnel`
 - `GET /api/v1/merchants/{merchant_key}/retry-analysis`
+- `POST /api/v1/merchants/{merchant_key}/advisor`
 - `GET /api/v1/data-quality/latest`
 - `GET /api/v1/merchants/{merchant_key}/insights`
 - `GET /api/v1/insights/{insight_id}`
@@ -91,6 +94,12 @@ uv run python manage.py refresh_insights MERCHANT_KEY 2026-06-01 2026-06-30
 ```
 
 The default baseline is the immediately preceding period of equal length. An insight is persisted only when both periods contain at least 30 valid sessions, the absolute change is at least three percentage points, and the two-proportion z-test reaches the configured 95% threshold. Driver language is associative, never causal. Financial impact is explicitly potential rather than confirmed loss.
+
+The advisor accepts the same date and allowlisted filters in a JSON body plus an optional
+`question`. It always returns deterministic aggregates and recommendations. To enable an
+additional Persian LLM narrative, configure `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL` for an
+OpenAI-compatible chat-completions endpoint. Only aggregate evidence is sent; session and card
+identifiers are never included. Provider errors fall back to the deterministic report.
 
 ## Quality checks
 

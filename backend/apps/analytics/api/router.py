@@ -11,6 +11,8 @@ from ninja import Query, Router
 from ninja.security import django_auth
 
 from apps.analytics.api.schemas import (
+    AdvisorRequest,
+    AdvisorResponse,
     DemoSessionResponse,
     EvidenceListResponse,
     FunnelResponse,
@@ -26,8 +28,10 @@ from apps.analytics.api.schemas import (
 )
 from apps.analytics.models import IngestionRun, Insight
 from apps.analytics.repositories.duckdb_repository import DuckDbRepository
+from apps.analytics.services.advisor import AdvisorQuery, MerchantAdvisorService
 from apps.analytics.services.ingestion import IngestionService
 from apps.analytics.services.insights import InsightQuery, InsightService
+from apps.analytics.services.llm import OpenAiCompatibleNarrativeGenerator
 from apps.analytics.services.metrics import MetricQuery, MetricsService
 from apps.merchants.models import Merchant, MerchantMembership
 
@@ -160,6 +164,34 @@ def retry_analysis(
 ) -> dict[str, Any]:
     _require_merchant_access(request, merchant_key)
     return MetricsService().retry_analysis(_to_metric_query(merchant_key, filters))
+
+
+@router.post("/merchants/{merchant_key}/advisor", response=AdvisorResponse, auth=django_auth)
+def merchant_advisor(
+    request: HttpRequest, merchant_key: str, payload: AdvisorRequest
+) -> dict[str, Any]:
+    """Return multi-dimensional evidence and optional grounded LLM guidance."""
+    _require_merchant_access(request, merchant_key)
+    narrative_generator = None
+    if settings.LLM_API_URL and settings.LLM_API_KEY and settings.LLM_MODEL:
+        narrative_generator = OpenAiCompatibleNarrativeGenerator(
+            api_url=settings.LLM_API_URL,
+            api_key=settings.LLM_API_KEY,
+            model=settings.LLM_MODEL,
+            timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
+        )
+    return MerchantAdvisorService(narrative_generator=narrative_generator).analyze(
+        AdvisorQuery(
+            merchant_key=merchant_key,
+            date_from=payload.date_from,
+            date_to=payload.date_to,
+            question=payload.question,
+            terminal_key=payload.terminal_key,
+            psp_code=payload.psp_code,
+            issuer_bank_code=payload.issuer_bank_code,
+            amount_bucket=payload.amount_bucket,
+        )
+    )
 
 
 @router.get("/merchants/{merchant_key}/insights", response=InsightListResponse, auth=django_auth)
