@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { Bot, ListChecks, MessageCircleQuestion, Sparkles } from "lucide-react";
-import type { AdvisorResponse } from "@/api/types";
+import { Bot, ChartNoAxesCombined, ListChecks, MessageCircleQuestion, Sparkles, Target } from "lucide-react";
+import type { AdvisorNarrativeAction, AdvisorNarrativeNeed, AdvisorResponse } from "@/api/types";
 import { getAdvisor } from "@/api/adapter";
 import { resolveDateRange, useGlobalFilters } from "@/lib/global-filters";
 import { Button } from "@/components/ui/button";
@@ -43,10 +43,10 @@ export function AdvisorPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <MessageCircleQuestion aria-hidden="true" className="size-4 text-primary" />
-            مشاور پرداخت (Advisor)
+            مشاور هوشمند کسب‌وکار پذیرنده
           </CardTitle>
           <CardDescription>
-            تحلیل چندبعدی دادهٔ پذیرنده بههمراه روایت تولیدشده با مدل زبانی (LLM) — پاسخ همیشه مبتنی بر شواهد تجمیعی است.
+            تحلیل تقاضا، ارزش فروش، تجربه مشتری، عملیات و سلامت پرداخت همراه با پیش‌بینی نیازهای احتمالی پذیرنده.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -55,7 +55,7 @@ export function AdvisorPage() {
             <Input
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="مثلاً: مهم‌ترین اقدام برای بهبود پرداخت چیست؟"
+              placeholder="مثلاً: برای رشد فروش و بازگشت مشتری در ماه آینده روی چه چیزی تمرکز کنم؟"
               onKeyDown={(event) => {
                 if (event.key === "Enter") void runAdvisor();
               }}
@@ -85,6 +85,12 @@ export function AdvisorPage() {
 }
 
 function AdvisorResult({ advisor }: { advisor: AdvisorResponse }) {
+  const trendItems = [
+    ["تقاضای روزانه", advisor.trends.changes.sessions_per_active_day],
+    ["فروش موفق", advisor.trends.changes.successful_amount],
+    ["میانگین مبلغ خرید", advisor.trends.changes.average_ticket],
+    ["نرخ موفقیت پرداخت", advisor.trends.changes.success_rate],
+  ] as const;
   return (
     <div className="flex flex-col gap-6">
       {advisor.advisor_narrative !== null ? (
@@ -99,14 +105,30 @@ function AdvisorResult({ advisor }: { advisor: AdvisorResponse }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 text-sm leading-7">
-            {advisor.advisor_narrative.answer !== undefined && <p>{advisor.advisor_narrative.answer}</p>}
-            {advisor.advisor_narrative.key_findings !== undefined && (
+            <p>{advisor.advisor_narrative.answer}</p>
+            {advisor.advisor_narrative.key_findings.length > 0 && (
               <NarrativeList title="یافته‌های کلیدی" items={advisor.advisor_narrative.key_findings} />
             )}
-            {advisor.advisor_narrative.next_actions !== undefined && (
-              <NarrativeList title="اقدام‌های بعدی" items={advisor.advisor_narrative.next_actions} />
+            {advisor.advisor_narrative.predicted_needs.length > 0 && (
+              <div>
+                <p className="mb-2 text-sm font-medium">نیازهای احتمالی از نگاه مدل</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {advisor.advisor_narrative.predicted_needs.map((need, index) => <NarrativeNeedCard key={`${need.need}-${index}`} need={need} />)}
+                </div>
+              </div>
             )}
-            {advisor.advisor_narrative.caveats !== undefined && (
+            {advisor.advisor_narrative.growth_opportunities.length > 0 && (
+              <NarrativeList title="فرصت‌های رشد" items={advisor.advisor_narrative.growth_opportunities} />
+            )}
+            {advisor.advisor_narrative.next_actions.length > 0 && (
+              <div>
+                <p className="mb-2 text-sm font-medium">برنامه اقدام پیشنهادی</p>
+                <div className="flex flex-col gap-3">
+                  {advisor.advisor_narrative.next_actions.map((action, index) => <NarrativeActionCard key={`${action.action}-${index}`} action={action} index={index} />)}
+                </div>
+              </div>
+            )}
+            {advisor.advisor_narrative.caveats.length > 0 && (
               <div className="rounded-lg border border-dashed border-border p-3">
                 <p className="mb-1 text-xs font-medium text-muted-foreground">نکات احتیاطی</p>
                 <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -127,6 +149,42 @@ function AdvisorResult({ advisor }: { advisor: AdvisorResponse }) {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base"><ChartNoAxesCombined className="size-4 text-primary" />روندهای کسب‌وکار</CardTitle>
+          <CardDescription>تغییر نیمه اخیر نسبت به نیمه اول بازه انتخابی</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {trendItems.map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-border p-4">
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className={`mt-2 text-xl font-semibold tabular-nums ${value === null ? "text-muted-foreground" : value < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                {formatChange(value)}
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base"><Target className="size-4 text-primary" />نیازهای پیش‌بینی‌شده پذیرنده</CardTitle>
+          <CardDescription>فرضیه‌های رتبه‌بندی‌شده بر پایه داده؛ برای تصمیم نهایی باید اعتبارسنجی شوند.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2">
+          {advisor.predicted_needs.map((need) => (
+            <div key={need.code} className="rounded-lg border border-border p-4">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-medium">{need.area}</p>
+                <Badge variant="secondary">اطمینان {formatPercent(need.confidence)}</Badge>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground"><strong>شاهد:</strong> {need.evidence}</p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground"><strong>اعتبارسنجی:</strong> {need.validation}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -212,4 +270,30 @@ function NarrativeList({ title, items }: { title: string; items: unknown[] }) {
       </ul>
     </div>
   );
+}
+
+function NarrativeNeedCard({ need }: { need: AdvisorNarrativeNeed }) {
+  return <div className="rounded-lg border border-border p-3">
+    <div className="flex justify-between gap-2"><span className="font-medium">{need.need ?? "نیاز پیشنهادی"}</span>{need.confidence && <Badge variant="outline">{need.confidence}</Badge>}</div>
+    {need.evidence && <p className="mt-2 text-xs text-muted-foreground"><strong>شاهد:</strong> {need.evidence}</p>}
+    {need.validation && <p className="mt-1 text-xs text-muted-foreground"><strong>آزمون:</strong> {need.validation}</p>}
+  </div>;
+}
+
+function NarrativeActionCard({ action, index }: { action: AdvisorNarrativeAction; index: number }) {
+  return <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+    <p className="font-medium">{index + 1}. {action.action ?? "اقدام پیشنهادی"}</p>
+    {action.why && <p className="mt-2 text-xs text-muted-foreground">{action.why}</p>}
+    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      {action.kpi && <p className="text-xs"><strong>KPI:</strong> {action.kpi}</p>}
+      {action.guardrail && <p className="text-xs"><strong>Guardrail:</strong> {action.guardrail}</p>}
+    </div>
+  </div>;
+}
+
+function formatPercent(value: number): string { return `${(value * 100).toLocaleString("fa-IR", { maximumFractionDigits: 0 })}٪`; }
+function formatChange(value: number | null): string {
+  if (value === null) return "داده ناکافی";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${(value * 100).toLocaleString("fa-IR", { maximumFractionDigits: 1 })}٪`;
 }

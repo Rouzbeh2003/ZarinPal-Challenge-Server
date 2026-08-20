@@ -70,10 +70,10 @@ export const navigationSections: NavigationSection[] = [
       },
       {
         key: "advisor",
-        label: "مشاور پرداخت",
+        label: "مشاور کسب‌وکار",
         path: appRoutes.advisor,
         icon: Bot,
-        description: "تحلیل چندبعدی و روایت LLM",
+        description: "پیش‌بینی نیازها، فرصت‌های رشد و روایت LLM",
       },
     ],
   },

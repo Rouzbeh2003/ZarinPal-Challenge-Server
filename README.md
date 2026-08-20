@@ -1,131 +1,223 @@
-# ZarinPal Merchant Analytics
+# داشبورد تحلیل پرداخت زرین‌پال
 
-Backend analytics and explainable Insight Engine for merchant payment attempts.
+این پروژه از دو بخش تشکیل شده است:
 
-## What is included
+- **Backend:** Django + Django Ninja، PostgreSQL و DuckDB
+- **Frontend:** React + TypeScript + Vite
 
-- Django 5.2 and Django Ninja API with OpenAPI at `/api/v1/docs`
-- PostgreSQL application data and merchant-level membership authorization
-- DuckDB ingestion from the supplied CSV.GZ
-- `attempt_fact`, deduplicated `session_fact`, `merchant_daily_metrics`, and Parquet exports
-- Data-quality issues with explicit reasons
-- Overview, payment health, funnel, retry, merchant list, and latest quality APIs
-- Versioned success-rate change detection with equal-period baselines, sample and significance checks
-- Multi-dimensional merchant advisor across amount, hour, weekday, PSP, bank, and terminal
-- Optional grounded LLM narrative with aggregate-only evidence and deterministic fallback
-- Financial-impact estimates, associative driver breakdowns, recommendations, trace, and masked evidence
-- Unit, authorization, ingestion, golden-number, and reconciliation tests
+روش پیشنهادی برای توسعه محلی این است که Backend و PostgreSQL را با Docker اجرا کنید و Frontend را با Node.js بالا بیاورید.
 
-The code follows a direct path that is easy to inspect:
+## پیش‌نیازها
+
+قبل از شروع این ابزارها را نصب و اجرا کنید:
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)؛ Docker باید در حال اجرا باشد.
+- [Node.js](https://nodejs.org/) نسخه 20 یا جدیدتر به‌همراه npm
+- Git
+
+برای بررسی نصب بودن ابزارها در PowerShell اجرا کنید:
+
+```powershell
+docker --version
+docker compose version
+node --version
+npm --version
+```
+
+## راه‌اندازی سریع
+
+تمام دستورهای این بخش، به‌جز دستورهای Frontend، باید از **ریشه پروژه** اجرا شوند؛ یعنی همان پوشه‌ای که فایل `docker-compose.yml` داخل آن است.
+
+### 1. تنظیم متغیرهای محیطی و کلید API
+
+فایل `.env` پروژه از قبل شامل تنظیمات محلی و کلید API است. این فایل را حذف یا commit نکنید و مقدار کلید را داخل README یا کد Frontend قرار ندهید.
+
+اگر فایل `.env` وجود نداشت، آن را از روی نمونه بسازید:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+سپس این سه مقدار را در `.env` تنظیم کنید:
+
+```env
+LLM_API_URL=https://api.avalai.ir/v1/chat/completions
+LLM_API_KEY=YOUR_API_KEY
+LLM_MODEL=gpt-5.6-sol
+```
+
+کلید فقط توسط Backend خوانده می‌شود. پس از تغییر `.env` باید کانتینر Backend را دوباره بسازید:
+
+```powershell
+docker compose up --build -d
+```
+
+### 2. اجرای Backend و دیتابیس
+
+```powershell
+docker compose up --build -d
+docker compose exec backend uv run python manage.py migrate
+```
+
+سرویس‌ها در پس‌زمینه اجرا می‌شوند. برای بررسی سلامت Backend:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/v1/health
+```
+
+در اجرای اول و قبل از ورود داده، مقدار `analytic_store` ممکن است `not_ready` باشد؛ این حالت طبیعی است.
+
+### 3. ورود دیتاست (فقط بار اول)
+
+فایل `other_challenge_data.csv.gz` باید در ریشه پروژه موجود باشد. برای ساخت دیتابیس تحلیلی اجرا کنید:
+
+```powershell
+docker compose exec backend uv run python manage.py ingest_analytics data/raw/other_challenge_data.csv.gz
+```
+
+این مرحله به‌دلیل حجم دیتاست ممکن است چند دقیقه زمان ببرد. پس از پایان، دوباره سلامت سرویس را بررسی کنید:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/v1/health
+```
+
+خروجی آماده باید شامل `status: ok` و `analytic_store: up` باشد.
+
+### 4. اجرای Frontend
+
+یک PowerShell جدید باز کنید و اجرا کنید:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+حالا این آدرس‌ها در دسترس‌اند:
+
+- داشبورد: <http://localhost:5173>
+- مستندات تعاملی API: <http://localhost:8000/api/v1/docs>
+- Health Check: <http://localhost:8000/api/v1/health>
+
+در حالت توسعه، Vite درخواست‌های `/api` را به Backend روی پورت `8000` هدایت می‌کند؛ بنابراین نیازی به قرار دادن کلید API یا آدرس Backend در Frontend نیست.
+
+## احراز هویت در محیط توسعه
+
+Frontend هنگام باز شدن به‌صورت خودکار از مسیر `demo-session` وارد می‌شود. Backend یک کاربر محلی به نام `demo-dashboard` می‌سازد و دسترسی پذیرنده‌های ingestشده را به او می‌دهد. برای اجرای محلی نیازی به ساخت کاربر یا ورود دستی نیست.
+
+این قابلیت فقط برای محیط توسعه است و نباید با تنظیمات development در production اجرا شود.
+
+## استفاده از قابلیت مشاور هوشمند
+
+پس از بالا آمدن هر دو بخش، از منوی داشبورد وارد صفحه مشاور شوید. درخواست از Frontend به Backend می‌رود و Backend با مقادیر `LLM_API_URL`، `LLM_API_KEY` و `LLM_MODEL` سرویس مدل را صدا می‌زند.
+
+اگر سرویس مدل در دسترس نباشد یا کلید اشتباه باشد، Backend گزارش قطعی مبتنی بر داده را برمی‌گرداند، اما روایت تکمیلی مدل تولید نمی‌شود. برای دیدن خطای سرویس، لاگ Backend را بررسی کنید:
+
+```powershell
+docker compose logs -f backend
+```
+
+## دستورات روزمره
+
+مشاهده وضعیت کانتینرها:
+
+```powershell
+docker compose ps
+```
+
+مشاهده لاگ Backend:
+
+```powershell
+docker compose logs -f backend
+```
+
+راه‌اندازی مجدد Backend پس از تغییر تنظیمات:
+
+```powershell
+docker compose up --build -d backend
+```
+
+خاموش کردن سرویس‌ها بدون حذف داده PostgreSQL:
+
+```powershell
+docker compose down
+```
+
+اجرای مجدد Frontend:
+
+```powershell
+cd frontend
+npm run dev
+```
+
+ساخت نسخه production فرانت:
+
+```powershell
+cd frontend
+npm run build
+```
+
+## اجرای تست‌ها
+
+تست‌های Backend:
+
+```powershell
+docker compose exec backend uv run pytest
+```
+
+بررسی build و TypeScript فرانت:
+
+```powershell
+cd frontend
+npm run build
+```
+
+## رفع خطاهای رایج
+
+### Docker اجرا نمی‌شود
+
+Docker Desktop را باز کنید و بعد از آماده شدن آن، `docker compose up --build -d` را دوباره اجرا کنید.
+
+### پورت 8000 یا 5173 اشغال است
+
+برنامه‌ای که از پورت استفاده می‌کند را ببندید. وضعیت سرویس‌های Docker را با `docker compose ps` بررسی کنید.
+
+### Health Check مقدار `analytic_store: not_ready` دارد
+
+دستور ingestion را اجرا کنید و مطمئن شوید فایل `other_challenge_data.csv.gz` در ریشه پروژه وجود دارد.
+
+### Frontend خطای اتصال یا Login نشان می‌دهد
+
+ابتدا این آدرس را باز کنید: <http://localhost:8000/api/v1/health>. سپس لاگ را ببینید:
+
+```powershell
+docker compose logs --tail 100 backend
+```
+
+مطمئن شوید Frontend را با `npm run dev` اجرا کرده‌اید؛ proxy فقط در dev server فعال است.
+
+### تغییر `.env` اعمال نشده است
+
+کانتینر Backend را recreate کنید:
+
+```powershell
+docker compose up --build -d --force-recreate backend
+```
+
+### داده‌ای در داشبورد نمایش داده نمی‌شود
+
+ابتدا ingestion را اجرا کنید. سپس صفحه را refresh کنید تا `demo-session` دوباره ساخته و دسترسی پذیرنده‌ها همگام شود.
+
+## ساختار کوتاه پروژه
 
 ```text
-API -> MetricsService -> DuckDbRepository -> session_fact
-CSV.GZ -> IngestionService -> attempt_fact -> session_fact -> daily metrics
+.
+├── backend/                     # Django API و موتور تحلیل
+├── frontend/                    # React/Vite dashboard
+├── other_challenge_data.csv.gz # دیتاست ورودی محلی
+├── .env                         # تنظیمات و کلیدها؛ commit نشود
+├── .env.example                 # نمونه تنظیمات بدون اطلاعات محرمانه
+└── docker-compose.yml           # PostgreSQL و Backend
 ```
 
-## Local setup with Docker
-
-1. Copy `.env.example` to `.env`.
-2. Keep `other_challenge_data.csv.gz` in the repository root.
-3. Start the services:
-
-   ```bash
-   docker compose up --build -d
-   docker compose exec backend uv run python manage.py migrate
-   docker compose exec backend uv run python manage.py createsuperuser
-   ```
-
-4. Ingest the dataset:
-
-   ```bash
-   docker compose exec backend uv run python manage.py ingest_analytics data/raw/other_challenge_data.csv.gz
-   ```
-
-5. Open `http://localhost:8000/api/v1/docs`.
-
-## Local setup without Docker
-
-Python 3.12+, `uv`, and PostgreSQL are required.
-
-```bash
-cd backend
-uv sync
-uv run python manage.py migrate
-uv run python manage.py ingest_analytics ../other_challenge_data.csv.gz
-uv run uvicorn config.asgi:application --reload
-```
-
-Set `DATABASE_URL` and `ANALYTICS_DATABASE_PATH` when their defaults are not suitable.
-
-## API authentication and merchant access
-
-Dashboard endpoints use short-lived JWT access tokens and rotating refresh tokens. Access tokens
-expire after 15 minutes by default; refresh tokens expire after 30 days and are stored as hashes so
-they can be revoked. Configure the lifetimes and signing key with the `JWT_*` environment variables.
-
-- `POST /api/v1/auth/login` with `{"username":"...","password":"..."}`
-- `POST /api/v1/auth/refresh` with `{"refresh_token":"..."}`
-- `POST /api/v1/auth/logout` with `{"refresh_token":"..."}`
-
-Send the returned access token as `Authorization: Bearer <access_token>`. A user can query a
-merchant only when a matching `MerchantMembership` exists. Ingestion automatically synchronizes
-merchant records but does not grant memberships. Create those through Django admin or the shell:
-
-```python
-MerchantMembership.objects.create(user=user, merchant=merchant)
-```
-
-The ingestion API is additionally restricted to staff. For the 61 MB source file, the management command is preferred because it does not occupy an HTTP request.
-
-## Main endpoints
-
-- `GET /api/v1/health`
-- `GET /api/v1/merchants`
-- `GET /api/v1/merchants/{merchant_key}/overview`
-- `GET /api/v1/merchants/{merchant_key}/payment-health`
-- `GET /api/v1/merchants/{merchant_key}/funnel`
-- `GET /api/v1/merchants/{merchant_key}/retry-analysis`
-- `POST /api/v1/merchants/{merchant_key}/advisor`
-- `GET /api/v1/data-quality/latest`
-- `GET /api/v1/merchants/{merchant_key}/insights`
-- `GET /api/v1/insights/{insight_id}`
-- `GET /api/v1/insights/{insight_id}/trace`
-- `GET /api/v1/insights/{insight_id}/evidence`
-- `POST /api/v1/admin/ingestion-runs`
-- `POST /api/v1/admin/analytics-refresh`
-
-Metric endpoints require `date_from` and `date_to` in ISO `YYYY-MM-DD` form and accept allowlisted terminal, PSP, bank, and amount-bucket filters.
-
-Generate an insight after ingestion with either the staff-only refresh API or:
-
-```bash
-cd backend
-uv run python manage.py refresh_insights MERCHANT_KEY 2026-06-01 2026-06-30
-```
-
-The default baseline is the immediately preceding period of equal length. An insight is persisted only when both periods contain at least 30 valid sessions, the absolute change is at least three percentage points, and the two-proportion z-test reaches the configured 95% threshold. Driver language is associative, never causal. Financial impact is explicitly potential rather than confirmed loss.
-
-The advisor accepts the same date and allowlisted filters in a JSON body plus an optional
-`question`. It always returns deterministic aggregates and recommendations. To enable an
-additional Persian LLM narrative, configure `LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL` for an
-OpenAI-compatible chat-completions endpoint. Only aggregate evidence is sent; session and card
-identifiers are never included. Provider errors fall back to the deterministic report.
-
-## Quality checks
-
-```bash
-cd backend
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy apps
-uv run pytest
-```
-
-Metric formulas and assumptions are in [backend/docs/METRICS.md](backend/docs/METRICS.md) and [backend/docs/DECISIONS.md](backend/docs/DECISIONS.md).
-
-## Troubleshooting
-
-- `analytic_store: not_ready`: run ingestion once and verify `ANALYTICS_DATABASE_PATH` is writable.
-- PostgreSQL connection failure: confirm the container is healthy and `DATABASE_URL` matches Compose.
-- Empty merchant list: ingestion creates merchants, but an administrator must create user memberships.
-- Ingestion schema error: check that all 22 required source columns are present; problematic values are retained in the quality report.
+برای جزئیات معیارها و تصمیم‌های فنی به `backend/docs/METRICS.md` و `backend/docs/DECISIONS.md` مراجعه کنید.

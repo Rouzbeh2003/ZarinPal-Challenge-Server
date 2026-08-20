@@ -229,11 +229,39 @@ export type AdvisorRecommendation = {
   guardrail: string;
 };
 
+export type AdvisorPredictedNeed = {
+  code: string;
+  area: string;
+  confidence: number;
+  evidence: string;
+  validation: string;
+};
+
+export type AdvisorTrendPeriod = {
+  valid_sessions: number;
+  sessions_per_active_day: number;
+  success_rate: number | null;
+  successful_amount: number;
+  average_ticket: number;
+};
+
+export type AdvisorTrends = {
+  comparison: "equal_halves";
+  previous: AdvisorTrendPeriod;
+  recent: AdvisorTrendPeriod;
+  changes: Record<"sessions_per_active_day" | "success_rate" | "successful_amount" | "average_ticket", number | null>;
+};
+
+export type AdvisorNarrativeNeed = { need?: string; confidence?: string; evidence?: string; validation?: string };
+export type AdvisorNarrativeAction = { action?: string; why?: string; kpi?: string; guardrail?: string };
+
 export type AdvisorNarrative = {
-  answer?: string;
-  key_findings?: unknown[];
-  next_actions?: unknown[];
-  caveats?: unknown[];
+  answer: string;
+  key_findings: string[];
+  predicted_needs: AdvisorNarrativeNeed[];
+  growth_opportunities: string[];
+  next_actions: AdvisorNarrativeAction[];
+  caveats: string[];
 };
 
 export type AdvisorResponse = {
@@ -243,6 +271,8 @@ export type AdvisorResponse = {
   overview: Record<string, unknown>;
   dimensions: AdvisorDimensions;
   retry: Record<string, unknown>;
+  trends: AdvisorTrends;
+  predicted_needs: AdvisorPredictedNeed[];
   recommendations: AdvisorRecommendation[];
   advisor_narrative: AdvisorNarrative | null;
   narrative_source: "llm" | "deterministic_engine" | "deterministic_engine_fallback";

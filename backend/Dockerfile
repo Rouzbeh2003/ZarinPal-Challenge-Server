@@ -6,5 +6,4 @@ RUN uv sync --no-dev
 COPY . .
 RUN mkdir -p data/raw data/processed data/warehouse
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["uv", "run", "uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
