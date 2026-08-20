@@ -1,0 +1,156 @@
+from datetime import date, datetime
+from typing import Any
+
+from ninja import Schema
+from pydantic import Field, model_validator
+
+
+class ErrorResponse(Schema):
+    code: str
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+    request_id: str
+
+
+class MetricFilters(Schema):
+    date_from: date
+    date_to: date
+    timezone: str = "Asia/Tehran"
+    terminal_key: str | None = None
+    psp_code: str | None = None
+    issuer_bank_code: str | None = None
+    amount_bucket: str | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "MetricFilters":
+        if self.date_from > self.date_to:
+            raise ValueError("date_from must be before or equal to date_to")
+        if (self.date_to - self.date_from).days > 366:
+            raise ValueError("date range cannot exceed 366 days")
+        return self
+
+
+class HealthResponse(Schema):
+    status: str
+    postgres: str
+    analytic_store: str
+    dataset_version: str | None
+
+
+class MerchantResponse(Schema):
+    merchant_key: str
+    category_id: str
+    category_title: str
+
+
+class MerchantListResponse(Schema):
+    items: list[MerchantResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class OverviewResponse(Schema):
+    valid_sessions: int
+    successful_sessions: int
+    successful_amount: int
+    potential_lost_amount: int
+    no_attempt_sessions: int
+    success_rate: float | None
+    no_attempt_rate: float | None
+    currency: str
+    metric_version: str
+
+
+class FunnelResponse(Schema):
+    created_sessions: int
+    attempted_sessions: int
+    bank_entry_sessions: int
+    successful_sessions: int
+
+
+class RetryResponse(Schema):
+    sessions_with_attempt: int
+    retried_sessions: int
+    recovered_sessions: int
+    recovered_amount: int
+    retry_rate: float | None
+    retry_recovery_rate: float | None
+    currency: str
+    metric_version: str
+
+
+class IngestionRunResponse(Schema):
+    id: str
+    status: str
+    dataset_version: str
+    rows_read: int
+    sessions_created: int
+    started_at: datetime
+    finished_at: datetime | None
+    quality_report: dict[str, Any]
+
+
+class InsightMetricResponse(Schema):
+    name: str
+    current: float
+    baseline: float
+    absolute_change: float
+    relative_change: float | None
+
+
+class FinancialImpactResponse(Schema):
+    amount: int
+    currency: str
+    method: str
+
+
+class InsightResponse(Schema):
+    id: str
+    merchant_id: str
+    type: str
+    severity: str
+    title: str
+    summary: str
+    metric: InsightMetricResponse
+    financial_impact: FinancialImpactResponse
+    drivers: list[dict[str, Any]]
+    recommended_actions: list[dict[str, str]]
+    confidence: float
+    coverage: float
+    period: dict[str, str]
+    baseline_period: dict[str, str]
+    trace_id: str
+    generated_at: datetime
+
+
+class InsightListResponse(Schema):
+    items: list[InsightResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class InsightTraceResponse(Schema):
+    trace_id: str
+    insight_id: str
+    trace: dict[str, Any]
+    generated_at: datetime
+
+
+class EvidenceItemResponse(Schema):
+    session_key: str
+    metric_date: date
+    amount: int
+    final_status: str
+    attempts_count: int
+    final_psp_code: str | None
+    final_issuer_bank_code: str | None
+    payer_card_masked: str | None
+
+
+class EvidenceListResponse(Schema):
+    items: list[EvidenceItemResponse]
+    page: int
+    page_size: int
+    total: int

@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.py[cod]
+backend/data/raw/*
+backend/data/processed/*
+backend/data/warehouse/*
+!backend/data/**/.gitkeep
+*.duckdb
+*.parquet
+other_challenge_data.csv.gz
+

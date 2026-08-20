@@ -1,0 +1,15 @@
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.duckdb
+*.parquet
+.venv/
+data/raw/*
+data/processed/*
+data/warehouse/*
+tests/
+.git/
+.gitignore
