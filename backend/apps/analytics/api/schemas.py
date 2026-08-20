@@ -56,7 +56,23 @@ class HealthResponse(Schema):
     data_date_to: date | None = None
 
 
-class DemoSessionResponse(Schema):
+class LoginRequest(Schema):
+    username: str
+    password: str
+
+
+class RefreshRequest(Schema):
+    refresh_token: str
+
+
+class TokenResponse(Schema):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+
+
+class DemoSessionResponse(TokenResponse):
     username: str
     merchant_count: int
 

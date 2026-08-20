@@ -59,7 +59,17 @@ Set `DATABASE_URL` and `ANALYTICS_DATABASE_PATH` when their defaults are not sui
 
 ## API authentication and merchant access
 
-Dashboard endpoints use Django session authentication. A user can query a merchant only when a matching `MerchantMembership` exists. Ingestion automatically synchronizes merchant records but does not grant memberships. Create those through Django admin or the shell:
+Dashboard endpoints use short-lived JWT access tokens and rotating refresh tokens. Access tokens
+expire after 15 minutes by default; refresh tokens expire after 30 days and are stored as hashes so
+they can be revoked. Configure the lifetimes and signing key with the `JWT_*` environment variables.
+
+- `POST /api/v1/auth/login` with `{"username":"...","password":"..."}`
+- `POST /api/v1/auth/refresh` with `{"refresh_token":"..."}`
+- `POST /api/v1/auth/logout` with `{"refresh_token":"..."}`
+
+Send the returned access token as `Authorization: Bearer <access_token>`. A user can query a
+merchant only when a matching `MerchantMembership` exists. Ingestion automatically synchronizes
+merchant records but does not grant memberships. Create those through Django admin or the shell:
 
 ```python
 MerchantMembership.objects.create(user=user, merchant=merchant)

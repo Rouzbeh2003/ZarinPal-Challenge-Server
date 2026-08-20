@@ -9,6 +9,7 @@ from django.test import Client
 from apps.analytics.models import Insight
 from apps.analytics.repositories.duckdb_repository import DuckDbRepository
 from apps.analytics.services.insights import InsightQuery, InsightService
+from apps.merchants.jwt import issue_token_pair
 from apps.merchants.models import Merchant, MerchantMembership
 
 
@@ -70,9 +71,11 @@ def test_insight_detail_enforces_merchant_membership(tmp_path: Path) -> None:
         baseline_end=date(2026, 1, 31),
     )
     client = Client()
-    client.force_login(user)
+    access_token = issue_token_pair(user)["access_token"]
 
-    response = client.get(f"/api/v1/insights/{insight.id}")
+    response = client.get(
+        f"/api/v1/insights/{insight.id}", HTTP_AUTHORIZATION=f"Bearer {access_token}"
+    )
 
     assert response.status_code == 403
 

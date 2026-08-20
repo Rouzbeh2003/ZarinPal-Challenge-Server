@@ -21,3 +21,17 @@ class MerchantMembership(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["user", "merchant"], name="unique_user_merchant")
         ]
+
+
+class RefreshToken(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="refresh_tokens"
+    )
+    jti = models.UUIDField(unique=True)
+    token_hash = models.CharField(max_length=64)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user", "expires_at"])]

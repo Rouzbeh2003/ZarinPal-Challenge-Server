@@ -2,13 +2,13 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
-from django.contrib.auth import login
+from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import connection
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Query, Router
-from ninja.security import django_auth
+from ninja.errors import HttpError
 
 from apps.analytics.api.schemas import (
     AdvisorRequest,
@@ -21,10 +21,13 @@ from apps.analytics.api.schemas import (
     InsightListResponse,
     InsightResponse,
     InsightTraceResponse,
+    LoginRequest,
     MerchantListResponse,
     MetricFilters,
     OverviewResponse,
+    RefreshRequest,
     RetryResponse,
+    TokenResponse,
 )
 from apps.analytics.models import IngestionRun, Insight
 from apps.analytics.repositories.duckdb_repository import DuckDbRepository
@@ -33,6 +36,13 @@ from apps.analytics.services.ingestion import IngestionService
 from apps.analytics.services.insights import InsightQuery, InsightService
 from apps.analytics.services.llm import OpenAiCompatibleNarrativeGenerator
 from apps.analytics.services.metrics import MetricQuery, MetricsService
+from apps.merchants.jwt import (
+    InvalidTokenError,
+    issue_token_pair,
+    jwt_auth,
+    revoke_refresh_token,
+    rotate_refresh_token,
+)
 from apps.merchants.models import Merchant, MerchantMembership
 
 router = Router(tags=["analytics"])
@@ -71,7 +81,7 @@ def health(request: HttpRequest) -> dict[str, Any]:
 
 
 @router.post("/auth/demo-session", response=DemoSessionResponse, auth=None)
-def demo_session(request: HttpRequest) -> dict[str, str | int]:
+def demo_session(request: HttpRequest) -> dict[str, Any]:
     """Create a local-only authenticated session for the hackathon dashboard."""
     if not settings.ENABLE_DEMO_AUTH:
         raise FileNotFoundError("Demo authentication is disabled")
@@ -85,8 +95,32 @@ def demo_session(request: HttpRequest) -> dict[str, str | int]:
         [MerchantMembership(user=user, merchant=merchant) for merchant in merchants],
         ignore_conflicts=True,
     )
-    login(request, user)
-    return {"username": user.username, "merchant_count": merchants.count()}
+    return {**issue_token_pair(user), "username": user.username, "merchant_count": merchants.count()}
+
+
+@router.post("/auth/login", response=TokenResponse, auth=None)
+def token_login(request: HttpRequest, payload: LoginRequest) -> dict[str, Any]:
+    user = authenticate(request, username=payload.username, password=payload.password)
+    if user is None or not user.is_active:
+        raise HttpError(401, "Invalid username or password")
+    return issue_token_pair(user)
+
+
+@router.post("/auth/refresh", response=TokenResponse, auth=None)
+def token_refresh(request: HttpRequest, payload: RefreshRequest) -> dict[str, Any]:
+    try:
+        return rotate_refresh_token(payload.refresh_token)
+    except InvalidTokenError as error:
+        raise HttpError(401, str(error)) from error
+
+
+@router.post("/auth/logout", response={204: None}, auth=None)
+def token_logout(request: HttpRequest, payload: RefreshRequest) -> tuple[int, None]:
+    try:
+        revoke_refresh_token(payload.refresh_token)
+    except InvalidTokenError as error:
+        raise HttpError(401, str(error)) from error
+    return 204, None
 
 
 @router.post(
@@ -114,7 +148,7 @@ def demo_analytics_refresh(
     return (201, _serialize_insight(insight)) if insight else (204, None)
 
 
-@router.get("/merchants", response=MerchantListResponse, auth=django_auth)
+@router.get("/merchants", response=MerchantListResponse, auth=jwt_auth)
 def list_merchants(request: HttpRequest, page: int = 1, page_size: int = 20) -> dict[str, Any]:
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
@@ -134,7 +168,7 @@ def list_merchants(request: HttpRequest, page: int = 1, page_size: int = 20) -> 
     }
 
 
-@router.get("/merchants/{merchant_key}/overview", response=OverviewResponse, auth=django_auth)
+@router.get("/merchants/{merchant_key}/overview", response=OverviewResponse, auth=jwt_auth)
 def overview(
     request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
 ) -> dict[str, Any]:
@@ -142,7 +176,7 @@ def overview(
     return MetricsService().overview(_to_metric_query(merchant_key, filters))
 
 
-@router.get("/merchants/{merchant_key}/payment-health", response=OverviewResponse, auth=django_auth)
+@router.get("/merchants/{merchant_key}/payment-health", response=OverviewResponse, auth=jwt_auth)
 def payment_health(
     request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
 ) -> dict[str, Any]:
@@ -150,7 +184,7 @@ def payment_health(
     return MetricsService().overview(_to_metric_query(merchant_key, filters))
 
 
-@router.get("/merchants/{merchant_key}/funnel", response=FunnelResponse, auth=django_auth)
+@router.get("/merchants/{merchant_key}/funnel", response=FunnelResponse, auth=jwt_auth)
 def funnel(
     request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
 ) -> dict[str, Any]:
@@ -158,7 +192,7 @@ def funnel(
     return MetricsService().funnel(_to_metric_query(merchant_key, filters))
 
 
-@router.get("/merchants/{merchant_key}/retry-analysis", response=RetryResponse, auth=django_auth)
+@router.get("/merchants/{merchant_key}/retry-analysis", response=RetryResponse, auth=jwt_auth)
 def retry_analysis(
     request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
 ) -> dict[str, Any]:
@@ -166,7 +200,7 @@ def retry_analysis(
     return MetricsService().retry_analysis(_to_metric_query(merchant_key, filters))
 
 
-@router.post("/merchants/{merchant_key}/advisor", response=AdvisorResponse, auth=django_auth)
+@router.post("/merchants/{merchant_key}/advisor", response=AdvisorResponse, auth=jwt_auth)
 def merchant_advisor(
     request: HttpRequest, merchant_key: str, payload: AdvisorRequest
 ) -> dict[str, Any]:
@@ -194,7 +228,7 @@ def merchant_advisor(
     )
 
 
-@router.get("/merchants/{merchant_key}/insights", response=InsightListResponse, auth=django_auth)
+@router.get("/merchants/{merchant_key}/insights", response=InsightListResponse, auth=jwt_auth)
 def list_insights(
     request: HttpRequest, merchant_key: str, page: int = 1, page_size: int = 20
 ) -> dict[str, Any]:
@@ -210,13 +244,13 @@ def list_insights(
     }
 
 
-@router.get("/insights/{insight_id}", response=InsightResponse, auth=django_auth)
+@router.get("/insights/{insight_id}", response=InsightResponse, auth=jwt_auth)
 def get_insight(request: HttpRequest, insight_id: str) -> dict[str, Any]:
     insight = _accessible_insight(request, insight_id)
     return _serialize_insight(insight)
 
 
-@router.get("/insights/{insight_id}/trace", response=InsightTraceResponse, auth=django_auth)
+@router.get("/insights/{insight_id}/trace", response=InsightTraceResponse, auth=jwt_auth)
 def get_insight_trace(request: HttpRequest, insight_id: str) -> dict[str, Any]:
     insight = _accessible_insight(request, insight_id)
     return {
@@ -227,7 +261,7 @@ def get_insight_trace(request: HttpRequest, insight_id: str) -> dict[str, Any]:
     }
 
 
-@router.get("/insights/{insight_id}/evidence", response=EvidenceListResponse, auth=django_auth)
+@router.get("/insights/{insight_id}/evidence", response=EvidenceListResponse, auth=jwt_auth)
 def get_insight_evidence(
     request: HttpRequest, insight_id: str, page: int = 1, page_size: int = 50
 ) -> dict[str, Any]:
@@ -236,12 +270,12 @@ def get_insight_evidence(
     return InsightService().evidence(insight, page=page, page_size=page_size)
 
 
-@router.get("/data-quality/latest", response=IngestionRunResponse, auth=django_auth)
+@router.get("/data-quality/latest", response=IngestionRunResponse, auth=jwt_auth)
 def latest_data_quality(request: HttpRequest) -> IngestionRun:
     return IngestionRun.objects.filter(status=IngestionRun.Status.SUCCEEDED).latest("finished_at")
 
 
-@router.post("/admin/ingestion-runs", response={201: IngestionRunResponse}, auth=django_auth)
+@router.post("/admin/ingestion-runs", response={201: IngestionRunResponse}, auth=jwt_auth)
 def create_ingestion_run(request: HttpRequest) -> tuple[int, IngestionRun]:
     if not request.user.is_staff:
         raise PermissionError("Staff access is required")
@@ -266,7 +300,7 @@ def create_ingestion_run(request: HttpRequest) -> tuple[int, IngestionRun]:
 
 
 @router.post(
-    "/admin/analytics-refresh", response={201: InsightResponse, 204: None}, auth=django_auth
+    "/admin/analytics-refresh", response={201: InsightResponse, 204: None}, auth=jwt_auth
 )
 def refresh_analytics(
     request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
