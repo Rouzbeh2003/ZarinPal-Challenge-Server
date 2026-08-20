@@ -43,7 +43,43 @@ class MetricsService:
             "no_attempt_rate": _safe_ratio(int(row.get("no_attempt_sessions", 0)), valid),
             "currency": "IRR",
             "metric_version": METRIC_VERSION,
+            "daily_trend": self._daily_trend(metric_query),
+            "psp_breakdown": self._psp_breakdown(metric_query),
         }
+
+    def _daily_trend(self, metric_query: MetricQuery) -> list[dict[str, Any]]:
+        where_sql, parameters = _build_filters(metric_query)
+        rows = self.repository.fetch_all(
+            f"""SELECT metric_date AS date,
+                       count(*) FILTER (WHERE final_status != 'excluded') AS valid_sessions,
+                       count(*) FILTER (WHERE is_successful) AS successful_sessions,
+                       coalesce(sum(amount) FILTER (WHERE is_successful), 0)::BIGINT AS successful_amount
+                FROM session_fact WHERE {where_sql}
+                GROUP BY metric_date ORDER BY metric_date""",
+            parameters,
+        )
+        for row in rows:
+            row["success_rate"] = _safe_ratio(
+                int(row["successful_sessions"]), int(row["valid_sessions"])
+            )
+        return rows
+
+    def _psp_breakdown(self, metric_query: MetricQuery) -> list[dict[str, Any]]:
+        where_sql, parameters = _build_filters(metric_query)
+        rows = self.repository.fetch_all(
+            f"""SELECT coalesce(final_psp_code, 'unknown') AS psp_code,
+                       count(*) FILTER (WHERE final_status != 'excluded') AS session_count,
+                       count(*) FILTER (WHERE is_successful) AS successful_sessions,
+                       coalesce(sum(amount) FILTER (WHERE final_status = 'unsuccessful'), 0)::BIGINT AS potential_lost_amount
+                FROM session_fact WHERE {where_sql}
+                GROUP BY final_psp_code ORDER BY session_count DESC""",
+            parameters,
+        )
+        for row in rows:
+            row["success_rate"] = _safe_ratio(
+                int(row["successful_sessions"]), int(row["session_count"])
+            )
+        return rows
 
     def funnel(self, metric_query: MetricQuery) -> dict[str, Any]:
         where_sql, parameters = _build_filters(metric_query)
@@ -68,12 +104,30 @@ class MetricsService:
         row = self.repository.fetch_one(query, parameters) or {}
         attempted = int(row.get("sessions_with_attempt", 0))
         retried = int(row.get("retried_sessions", 0))
+        breakdown = self.repository.fetch_all(
+            f"""SELECT coalesce(final_psp_code, 'unknown') AS psp_code,
+                       coalesce(final_issuer_bank_code, 'unknown') AS issuer_bank_code,
+                       count(*) FILTER (WHERE has_real_attempt) AS session_count,
+                       count(*) FILTER (WHERE has_retry) AS retried_sessions,
+                       count(*) FILTER (WHERE recovered_after_retry) AS recovered_sessions,
+                       coalesce(sum(amount) FILTER (WHERE recovered_after_retry), 0)::BIGINT AS recovered_amount
+                FROM session_fact WHERE {where_sql}
+                GROUP BY final_psp_code, final_issuer_bank_code
+                HAVING count(*) FILTER (WHERE has_retry) > 0
+                ORDER BY retried_sessions DESC LIMIT 25""",
+            parameters,
+        )
+        for item in breakdown:
+            item["recovery_rate"] = _safe_ratio(
+                int(item["recovered_sessions"]), int(item["retried_sessions"])
+            )
         return {
             **row,
             "retry_rate": _safe_ratio(retried, attempted),
             "retry_recovery_rate": _safe_ratio(int(row.get("recovered_sessions", 0)), retried),
             "currency": "IRR",
             "metric_version": METRIC_VERSION,
+            "breakdown": breakdown,
         }
 
 

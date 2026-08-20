@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from django.conf import settings
+from django.contrib.auth import login
 from django.contrib.auth.models import User
 from django.db import connection
 from django.http import HttpRequest
@@ -10,6 +11,7 @@ from ninja import Query, Router
 from ninja.security import django_auth
 
 from apps.analytics.api.schemas import (
+    DemoSessionResponse,
     EvidenceListResponse,
     FunnelResponse,
     HealthResponse,
@@ -33,19 +35,24 @@ router = Router(tags=["analytics"])
 
 
 @router.get("/health", response=HealthResponse, auth=None)
-def health(request: HttpRequest) -> dict[str, str | None]:
+def health(request: HttpRequest) -> dict[str, Any]:
     postgres_status = "up"
     analytic_status = "up"
     dataset_version = None
+    data_date_from = None
+    data_date_to = None
     try:
         connection.ensure_connection()
     except Exception:  # Health must report infrastructure failure instead of hiding it.
         postgres_status = "down"
     try:
         row = DuckDbRepository().fetch_one(
-            "SELECT max(dataset_version) AS version FROM session_fact"
+            "SELECT max(dataset_version) AS version, min(metric_date) AS data_date_from, "
+            "max(metric_date) AS data_date_to FROM session_fact"
         )
         dataset_version = row["version"] if row else None
+        data_date_from = row["data_date_from"] if row else None
+        data_date_to = row["data_date_to"] if row else None
     except Exception:
         analytic_status = "not_ready"
     status = "ok" if postgres_status == "up" and analytic_status == "up" else "degraded"
@@ -54,7 +61,53 @@ def health(request: HttpRequest) -> dict[str, str | None]:
         "postgres": postgres_status,
         "analytic_store": analytic_status,
         "dataset_version": dataset_version,
+        "data_date_from": data_date_from,
+        "data_date_to": data_date_to,
     }
+
+
+@router.post("/auth/demo-session", response=DemoSessionResponse, auth=None)
+def demo_session(request: HttpRequest) -> dict[str, str | int]:
+    """Create a local-only authenticated session for the hackathon dashboard."""
+    if not settings.ENABLE_DEMO_AUTH:
+        raise FileNotFoundError("Demo authentication is disabled")
+    _synchronize_merchants()
+    user, _ = User.objects.get_or_create(username="demo-dashboard")
+    if not user.is_staff:
+        user.is_staff = True
+        user.save(update_fields=["is_staff"])
+    merchants = Merchant.objects.filter(is_active=True)
+    MerchantMembership.objects.bulk_create(
+        [MerchantMembership(user=user, merchant=merchant) for merchant in merchants],
+        ignore_conflicts=True,
+    )
+    login(request, user)
+    return {"username": user.username, "merchant_count": merchants.count()}
+
+
+@router.post(
+    "/auth/demo-analytics-refresh",
+    response={201: InsightResponse, 204: None},
+    auth=None,
+)
+def demo_analytics_refresh(
+    request: HttpRequest, merchant_key: str, filters: Query[MetricFilters]
+) -> tuple[int, dict[str, Any] | None]:
+    """Generate an insight without CSRF only in the local development environment."""
+    if not settings.ENABLE_DEMO_AUTH:
+        raise FileNotFoundError("Demo analytics refresh is disabled")
+    insight = InsightService().generate(
+        InsightQuery(
+            merchant_key=merchant_key,
+            date_from=filters.date_from,
+            date_to=filters.date_to,
+            terminal_key=filters.terminal_key,
+            psp_code=filters.psp_code,
+            issuer_bank_code=filters.issuer_bank_code,
+            amount_bucket=filters.amount_bucket,
+        )
+    )
+    return (201, _serialize_insight(insight)) if insight else (204, None)
 
 
 @router.get("/merchants", response=MerchantListResponse, auth=django_auth)

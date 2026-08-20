@@ -35,6 +35,13 @@ class HealthResponse(Schema):
     postgres: str
     analytic_store: str
     dataset_version: str | None
+    data_date_from: date | None = None
+    data_date_to: date | None = None
+
+
+class DemoSessionResponse(Schema):
+    username: str
+    merchant_count: int
 
 
 class MerchantResponse(Schema):
@@ -50,6 +57,22 @@ class MerchantListResponse(Schema):
     total: int
 
 
+class DailyTrendResponse(Schema):
+    date: date
+    valid_sessions: int
+    successful_sessions: int
+    successful_amount: int
+    success_rate: float | None
+
+
+class PspBreakdownResponse(Schema):
+    psp_code: str
+    session_count: int
+    successful_sessions: int
+    success_rate: float | None
+    potential_lost_amount: int
+
+
 class OverviewResponse(Schema):
     valid_sessions: int
     successful_sessions: int
@@ -60,6 +83,8 @@ class OverviewResponse(Schema):
     no_attempt_rate: float | None
     currency: str
     metric_version: str
+    daily_trend: list[DailyTrendResponse] = Field(default_factory=list)
+    psp_breakdown: list[PspBreakdownResponse] = Field(default_factory=list)
 
 
 class FunnelResponse(Schema):
@@ -78,6 +103,7 @@ class RetryResponse(Schema):
     retry_recovery_rate: float | None
     currency: str
     metric_version: str
+    breakdown: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class IngestionRunResponse(Schema):
