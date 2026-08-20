@@ -1,0 +1,45 @@
+@import "@fontsource-variable/vazirmatn";
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #0f172a;
+  --color-foreground: #f8fafc;
+  --color-card: #171f30;
+  --color-card-foreground: #f8fafc;
+  --color-muted: #202a3d;
+  --color-muted-foreground: #94a3b8;
+  --color-border: #334155;
+  --color-primary: #f59e0b;
+  --color-primary-foreground: #0f172a;
+  --color-secondary: #273449;
+  --color-secondary-foreground: #f8fafc;
+  --color-accent: #2a3850;
+  --color-accent-foreground: #f8fafc;
+  --color-popover: #1b2638;
+  --color-popover-foreground: #f8fafc;
+  --color-input: #334155;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #f8fafc;
+  --color-ring: #f59e0b;
+  --font-sans: "Vazirmatn Variable", Vazirmatn, IRANSansX, Tahoma, sans-serif;
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { direction: rtl; }
+  body {
+    @apply min-h-screen bg-background font-sans text-foreground antialiased;
+    margin: 0;
+  }
+  button, input, select, textarea { font: inherit; }
+
+  /* دسترس‌پذیری: پشتیبانی از کاهش حرکت سیستم */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
