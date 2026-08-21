@@ -19,18 +19,18 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # The dataset lives at backend/data/raw/other_challenge_data.csv.gz on the
+      # host; single-file bind mounts are unreliable on Windows, so only the
+      # folder is mounted.
       - ./backend/data:/app/data
-      - ./other_challenge_data.csv.gz:/app/data/raw/other_challenge_data.csv.gz:ro
-      - ./merchant_credentials.csv:/app/merchant_credentials.csv:ro
     depends_on:
       postgres:
         condition: service_healthy
-    command:
-      - sh
-      - -c
-      - >-
-        python manage.py seed_merchant_users &&
-        exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000
+    # Migrations and merchant login synchronization run before uvicorn.
+    command: >
+      sh -c "uv run python manage.py migrate --noinput &&
+             uv run python manage.py seed_merchant_users &&
+             uvicorn config.asgi:application --host 0.0.0.0 --port 8000"
 
   frontend:
     build: ./frontend

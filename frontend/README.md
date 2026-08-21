@@ -2,9 +2,17 @@
 
 داشبورد تحلیلی پذیرندگان زرین‌پال — فارسی/RTL، تم تیره، مبتنی بر React 19 + Vite + TypeScript + Tailwind CSS v4 + Shadcn UI.
 
-> ⚠️ **وضعیت:** تمام داده‌های فعلی «نمایشی» (mock) هستند و نباید به‌عنوان تحلیل واقعی تراکنش نمایش داده شوند. هیچ Backend یا API واقعی هنوز متصل نشده است.
+> **وضعیت:** به Backend Django متصل است و داده‌های داشبورد از دیتاست واقعی تراکنش‌ها می‌آیند. فایل‌های `src/mocks/` فقط برای حالت آفلاین نگه داشته شده‌اند و در جریان عادی استفاده نمی‌شوند.
 
 ## اجرای محلی
+
+روش پیشنهادی برای دمو: اجرای کل استک از ریشه پروژه با Docker (فرانت با nginx سرو می‌شود؛ به Node نیاز نیست):
+
+```powershell
+docker compose up --build -d   # از ریشه پروژه → داشبورد روی http://localhost:5173
+```
+
+توسعه با hot-reload (نیازمند Node.js 20+)؛ ابتدا `docker compose stop frontend` را اجرا کنید تا تداخل پورت پیش نیاید:
 
 ```bash
 npm install        # نصب وابستگی‌ها (یک‌بار)
@@ -16,6 +24,10 @@ Build تولید:
 ```bash
 npm run build      # tsc (تایپ‌چک) + vite build → خروجی در dist/
 ```
+
+## Docker
+
+`Dockerfile` دو مرحله‌ای است: مرحله build با Node اپ را کامپایل می‌کند و مرحله serve با nginx فایل‌های استاتیک را سرو می‌کند و مسیر `/api/` را به سرویس backend در Compose پروکسی می‌کند. تنظیمات nginx در `docker/nginx.conf` است؛ مسیرهای ناشناخته به `index.html` برمی‌گردند (SPA routing).
 
 ## محتوا و صفحات
 
@@ -56,13 +68,12 @@ src/
     └── utils.ts          # تابع cn
 ```
 
-## مرز داده و اتصال Backend آینده
+## مرز داده و اتصال Backend
 
 - **قراردادها:** همه انواع در `src/api/types.ts` تعریف شده‌اند و با `BACKEND_IMPLEMENTATION_SPEC.md` هماهنگ‌اند (درصد بین ۰ و ۱، مبلغ integer با currency، severity محدود، ساختار trace).
-- **آداپتر:** صفحات فقط از `src/api/adapter.ts` داده می‌گیرند (`getOverview`, `getPaymentHealth`, `getRetryAnalysis`, `getInsights`, `getInsightDetail`, `getTrace`). الان همگی از `src/mocks/` می‌خوانند.
-- **اتصال واقعی:** برای وصل‌کردن Backend، فقط همین فایل `adapter.ts` را با `fetch` به API واقعی بازنویسی کنید؛ شکل خروجی (types) ثابت می‌ماند و صفحات بدون تغییر کار می‌کنند.
-
-مسیرهای API آینده (طبق سند Backend):
+- **آداپتر:** صفحات فقط از `src/api/adapter.ts` داده می‌گیرند؛ این فایل به API واقعی Django با JWT متصل است (Bearer + رفرش خودکار توکن) و پاسخ‌های Snake_case را به types نگاشت می‌کند.
+- **احراز هویت:** در توسعه، ورود خودکار با `demo-session` انجام می‌شود؛ برای تولید `login/refresh` در نظر گرفته شده است.
+- **مسیرهای API** (پیاده‌سازی‌شده در Backend):
 
 ```text
 GET /api/v1/merchants
@@ -84,6 +95,6 @@ GET /api/v1/insights/{insight_id}/trace
 
 ## نکات فنی
 
-- Vite dev server معمولاً روی `http://localhost:5173` بالا می‌آید.
-- Build تولید با روتر `BrowserRouter` فرض می‌شود (برای هاست استاتیک، rewrites لازم است).
-- برای استقرار واقعی، `npm run build` و سرو کردن پوشه `dist/` کافی است.
+- Vite dev server معمولاً روی `http://localhost:5173` بالا می‌آید؛ در Docker، nginx همان پورت را از کانتینر سرو می‌کند.
+- Build تولید با روتر `BrowserRouter` کار می‌کند؛ در Docker، nginx مسیرهای ناشناخته را به `index.html` برمی‌گرداند.
+- برای استقرار بدون Compose نیز `npm run build` و سرو کردن پوشه `dist/` با هر وب‌سرور استاتیک (با rewrites) کافی است.
