@@ -10,6 +10,7 @@ import { InsightDetailPage } from "@/pages/insight-detail-page";
 import { AdvisorPage } from "@/pages/advisor-page";
 import { TracePage } from "@/pages/trace-page";
 import { DesignPage } from "@/pages/design-page";
+import { MerchantsPage } from "@/pages/merchants-page";
 
 export function App() {
   const { pathname } = useLocation();
@@ -33,6 +34,7 @@ export function App() {
     { path: "/insights/:insightId/trace", element: <TracePage /> },
     { path: appRoutes.advisor, element: <AdvisorPage /> },
     { path: appRoutes.design, element: <DesignPage /> },
+    { path: appRoutes.merchants, element: <MerchantsPage /> },
     { path: "*", element: <OverviewPage /> },
   ]);
 

@@ -144,8 +144,10 @@ function formatDayLabel(isoDate: string): string {
 }
 
 const KPI_TITLES: Record<string, string> = {
+  valid_sessions: "سشن‌های معتبر",
   successful_amount: "فروش موفق",
   success_rate: "نرخ موفقیت",
+  potential_lost_amount: "مبلغ بالقوه ازدست‌رفته",
   retry_rate: "نرخ تلاش مجدد",
   at_risk_amount: "مبلغ در معرض ازدست‌رفتن",
 };

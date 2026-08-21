@@ -56,10 +56,44 @@ let refreshToken: string | null = null;
 
 export function setAccessToken(token: string | null): void {
   accessToken = token;
+  if (token) sessionStorage.setItem("dashboard_access_token", token);
+  else sessionStorage.removeItem("dashboard_access_token");
 }
 
 export function setRefreshToken(token: string | null): void {
   refreshToken = token;
+  if (token) sessionStorage.setItem("dashboard_refresh_token", token);
+  else sessionStorage.removeItem("dashboard_refresh_token");
+}
+
+/** نشست ذخیره‌شده در همین تب را برای بازیابی بعد از refresh فعال می‌کند. */
+export function restoreStoredTokens(): boolean {
+  const storedAccess = sessionStorage.getItem("dashboard_access_token");
+  const storedRefresh = sessionStorage.getItem("dashboard_refresh_token");
+  if (!storedAccess || !storedRefresh) return false;
+  accessToken = storedAccess;
+  refreshToken = storedRefresh;
+  return true;
+}
+
+export async function getAuthSession(): Promise<{ username: string; is_superuser: boolean }> {
+  return requestJson<{ username: string; is_superuser: boolean }>("/auth/session");
+}
+
+export async function updateAccount(payload: {
+  currentPassword: string;
+  username: string;
+  newPassword?: string;
+}): Promise<{ username: string; is_superuser: boolean }> {
+  return requestJson<{ username: string; is_superuser: boolean }>("/auth/account", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      current_password: payload.currentPassword,
+      username: payload.username,
+      new_password: payload.newPassword || null,
+    }),
+  });
 }
 
 /** رفرش توکن access با استفاده از refresh_token؛ در صورت موفقیت توکن جدید تنظیم می‌شود. */
@@ -127,6 +161,18 @@ type RawMerchant = {
   category_id: string;
   category_title: string;
 };
+
+export type MerchantCredential = {
+  merchant_key: string;
+  category_title: string;
+  username: string;
+  password: string;
+};
+
+export async function getMerchantCredentials(): Promise<MerchantCredential[]> {
+  const data = await requestJson<{ items: MerchantCredential[] }>("/admin/merchant-credentials");
+  return data.items;
+}
 
 type RawMerchantList = {
   items: RawMerchant[];
@@ -393,9 +439,12 @@ type RawInsight = {
     contribution_score: number;
     claim: string;
   }>;
-  recommended_actions: Array<{ action: string; reason: string }>;
+  recommended_actions: Array<{ action: string; reason: string; target_metric?: string; target_value?: number; horizon_days?: number; potential_financial_impact?: number; impact_is_additive?: boolean; impact_scope?: string }>;
   confidence: number;
   coverage: number;
+  coverage_details?: { input_records: number; excluded_records: number; metric_analyzed_records: number; metric_null_records: number; metric_coverage: number; adjusted_analyzed_records: number; adjusted_null_records: number; adjusted_coverage: number };
+  adjusted_analysis?: { method: string; raw_effect: number | null; adjusted_effect: number | null; current_adjusted_rate: number | null; baseline_adjusted_rate: number | null; common_support_coverage: number; strata_count: number };
+  action_plan?: { potential_financial_impact: number; impact_is_additive: boolean; note: string };
   period: { date_from: string; date_to: string };
   baseline_period: { date_from: string; date_to: string; method?: string };
   trace_id: string;
@@ -438,9 +487,39 @@ function mapInsight(raw: RawInsight): Insight {
     recommendedActions: raw.recommended_actions.map((a) => ({
       title: a.action,
       description: a.reason,
+      targetMetric: a.target_metric,
+      targetValue: a.target_value,
+      horizonDays: a.horizon_days,
+      potentialFinancialImpact: a.potential_financial_impact,
+      impactIsAdditive: a.impact_is_additive,
+      impactScope: a.impact_scope,
     })),
     confidence: raw.confidence,
     coverage: raw.coverage,
+    coverageDetails: raw.coverage_details === undefined ? undefined : {
+      inputRecords: raw.coverage_details.input_records,
+      excludedRecords: raw.coverage_details.excluded_records,
+      metricAnalyzedRecords: raw.coverage_details.metric_analyzed_records,
+      metricNullRecords: raw.coverage_details.metric_null_records,
+      metricCoverage: raw.coverage_details.metric_coverage,
+      adjustedAnalyzedRecords: raw.coverage_details.adjusted_analyzed_records,
+      adjustedNullRecords: raw.coverage_details.adjusted_null_records,
+      adjustedCoverage: raw.coverage_details.adjusted_coverage,
+    },
+    adjustedAnalysis: raw.adjusted_analysis === undefined ? undefined : {
+      method: raw.adjusted_analysis.method,
+      rawEffect: raw.adjusted_analysis.raw_effect ?? undefined,
+      adjustedEffect: raw.adjusted_analysis.adjusted_effect ?? undefined,
+      currentAdjustedRate: raw.adjusted_analysis.current_adjusted_rate ?? undefined,
+      baselineAdjustedRate: raw.adjusted_analysis.baseline_adjusted_rate ?? undefined,
+      commonSupportCoverage: raw.adjusted_analysis.common_support_coverage,
+      strataCount: raw.adjusted_analysis.strata_count,
+    },
+    actionPlan: raw.action_plan === undefined ? undefined : {
+      potentialFinancialImpact: raw.action_plan.potential_financial_impact,
+      impactIsAdditive: raw.action_plan.impact_is_additive,
+      note: raw.action_plan.note,
+    },
     period: { dateFrom: raw.period.date_from, dateTo: raw.period.date_to },
     baselinePeriod: { dateFrom: raw.baseline_period.date_from, dateTo: raw.baseline_period.date_to },
     traceId: raw.trace_id,
@@ -595,4 +674,23 @@ export async function getInsightTrace(insightId: string): Promise<Trace> {
 export async function getTrace(_params: QueryParams = {}): Promise<Trace> {
   // مسیر عمومی trace در API وجود ندارد؛ trace همیشه به یک insight وابسته است.
   throw new Error("Trace عمومی بدون insight در دسترس نیست؛ از مسیر بینش استفاده کنید.");
+}
+
+export async function getAdvisorEvidence(
+  merchantKey: string,
+  dateFrom: string,
+  dateTo: string,
+  page: number,
+  pageSize = 10,
+): Promise<NonNullable<AdvisorResponse["transaction_evidence"]>> {
+  const query = new URLSearchParams({
+    date_from: dateFrom,
+    date_to: dateTo,
+    timezone: "Asia/Tehran",
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return requestJson<NonNullable<AdvisorResponse["transaction_evidence"]>>(
+    `/merchants/${merchantKey}/advisor/evidence?${query.toString()}`,
+  );
 }

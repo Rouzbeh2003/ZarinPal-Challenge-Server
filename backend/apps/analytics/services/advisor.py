@@ -1,5 +1,7 @@
-from dataclasses import asdict, dataclass
-from datetime import date
+import re
+import statistics
+from dataclasses import asdict, dataclass, replace
+from datetime import date, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -24,6 +26,9 @@ class AdvisorQuery:
     psp_code: str | None = None
     issuer_bank_code: str | None = None
     amount_bucket: str | None = None
+    category_id: str = ""
+    category_title: str = ""
+    peer_merchant_keys: tuple[str, ...] = ()
 
     def as_metric_query(self) -> MetricQuery:
         return MetricQuery(
@@ -64,6 +69,7 @@ class MerchantAdvisorService:
         self.narrative_generator = narrative_generator
 
     def analyze(self, query: AdvisorQuery) -> dict[str, Any]:
+        query = _query_with_question_period(query)
         metric_query = query.as_metric_query()
         overview = self.metrics.overview(metric_query)
         dimensions = {
@@ -80,13 +86,16 @@ class MerchantAdvisorService:
         }
         retry = self.metrics.retry_analysis(metric_query)
         trends = self._trend_signals(metric_query)
+        peer_comparison = self._peer_comparison(query, overview)
         needs = _predict_needs(overview, retry, dimensions, trends)
         recommendations = _recommend(overview, retry, dimensions, trends, needs)
+        transaction_evidence = self.transaction_evidence(metric_query, page=1, page_size=10)
         evidence = {
             "overview": _public_overview(overview),
             "retry": {key: value for key, value in retry.items() if key != "breakdown"},
             "dimensions": dimensions,
             "trends": trends,
+            "peer_comparison": peer_comparison,
             "predicted_needs": needs,
             "recommendations": [asdict(item) for item in recommendations],
         }
@@ -99,8 +108,10 @@ class MerchantAdvisorService:
             "dimensions": dimensions,
             "retry": evidence["retry"],
             "trends": trends,
+            "peer_comparison": peer_comparison,
             "predicted_needs": needs,
             "recommendations": evidence["recommendations"],
+            "transaction_evidence": transaction_evidence,
             "advisor_narrative": narrative,
             "narrative_source": narrative_source,
             "methodology": {
@@ -109,6 +120,129 @@ class MerchantAdvisorService:
                 "claims": "forecasted_needs_are_ranked_hypotheses_not_causation",
                 "privacy": "only aggregate evidence is shared with the narrative generator",
             },
+        }
+
+    def _peer_comparison(
+        self, query: AdvisorQuery, merchant_overview: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Compare against one aggregate cohort; never expose another merchant's row."""
+        peer_keys = tuple(dict.fromkeys(query.peer_merchant_keys))
+        base = {
+            "category_id": query.category_id,
+            "category_title": query.category_title,
+            "peer_count": len(peer_keys),
+            "available": False,
+            "privacy": "aggregate_cohort_only",
+            "metrics": [],
+        }
+        # At least two peers prevents a cohort value from revealing one merchant's metric.
+        if len(peer_keys) < 2:
+            return base
+        placeholders = ", ".join("?" for _ in peer_keys)
+        rows = self.repository.fetch_all(
+            f"""SELECT merchant_key,
+                       count(*) FILTER (WHERE final_status != 'excluded') AS valid_sessions,
+                       count(*) FILTER (WHERE is_successful) AS successful_sessions,
+                       coalesce(sum(amount) FILTER (WHERE is_successful), 0)::BIGINT AS successful_amount,
+                       coalesce(avg(amount) FILTER (WHERE is_successful), 0)::DOUBLE AS average_ticket
+                FROM session_fact
+                WHERE merchant_key IN ({placeholders}) AND metric_date BETWEEN ? AND ?
+                GROUP BY merchant_key""",
+            [*peer_keys, query.date_from, query.date_to],
+        )
+        rows = [row for row in rows if int(row["valid_sessions"]) > 0]
+        if len(rows) < 2:
+            return base
+        peer_valid = sum(int(row["valid_sessions"]) for row in rows)
+        peer_successful = sum(int(row["successful_sessions"]) for row in rows)
+        peer_amount = sum(int(row["successful_amount"]) for row in rows)
+        merchant_valid = int(merchant_overview.get("valid_sessions", 0))
+        merchant_successful = int(merchant_overview.get("successful_sessions", 0))
+        merchant_amount = int(merchant_overview.get("successful_amount", 0))
+        success_rates = [int(row["successful_sessions"]) / int(row["valid_sessions"]) for row in rows]
+        average_tickets = [
+            float(row["successful_amount"]) / int(row["successful_sessions"])
+            for row in rows if int(row["successful_sessions"]) > 0
+        ]
+        successful_amounts = [float(row["successful_amount"]) for row in rows]
+        metrics = [
+            self._comparison_metric(
+                "success_rate", "نرخ موفقیت", merchant_successful / merchant_valid if merchant_valid else None,
+                peer_successful / peer_valid, "percent", success_rates,
+            ),
+            self._comparison_metric(
+                "average_ticket", "میانگین مبلغ خرید",
+                merchant_amount / merchant_successful if merchant_successful else None,
+                peer_amount / peer_successful if peer_successful else None, "irr", average_tickets,
+            ),
+            self._comparison_metric(
+                "successful_amount_per_peer", "فروش موفق",
+                merchant_amount, peer_amount / len(rows), "irr", successful_amounts,
+            ),
+        ]
+        return {
+            **base,
+            "peer_count": len(rows),
+            "available": True,
+            "benchmark_methods": ["volume_weighted", "equal_weight", "merchant_median"],
+            "metrics": metrics,
+        }
+
+    @staticmethod
+    def _comparison_metric(
+        code: str,
+        label: str,
+        merchant_value: float | None,
+        peer_value: float | None,
+        unit: str,
+        peer_values: list[float],
+    ) -> dict[str, Any]:
+        difference = _relative_change(peer_value, merchant_value)
+        equal_weight_value = statistics.fmean(peer_values) if peer_values else None
+        median_value = statistics.median(peer_values) if peer_values else None
+        percentile = (
+            sum(value <= merchant_value for value in peer_values) / len(peer_values)
+            if peer_values and merchant_value is not None else None
+        )
+        return {
+            "code": code, "label": label, "merchant_value": merchant_value,
+            "peer_value": peer_value, "difference": difference, "unit": unit,
+            "peer_equal_weight_value": equal_weight_value,
+            "peer_median_value": median_value,
+            "merchant_percentile": percentile,
+        }
+
+    def transaction_evidence(
+        self, query: MetricQuery, *, page: int, page_size: int
+    ) -> dict[str, Any]:
+        """Return a non-sensitive page from every session behind the selected report period."""
+        where_sql, parameters = _build_filters(query)
+        offset = (page - 1) * page_size
+        rows = self.repository.fetch_all(
+            f"""SELECT session_key, metric_date, amount, final_status, attempts_count,
+                       final_psp_code, final_issuer_bank_code,
+                       count(*) OVER () AS total
+                FROM session_fact WHERE {where_sql}
+                ORDER BY metric_date DESC, first_attempt_at DESC NULLS LAST, session_key
+                LIMIT ? OFFSET ?""",
+            [*parameters, page_size, offset],
+        )
+        if rows:
+            total = int(rows[0]["total"])
+        else:
+            count_row = self.repository.fetch_one(
+                f"SELECT count(*) AS total FROM session_fact WHERE {where_sql}", parameters
+            )
+            total = int(count_row["total"]) if count_row else 0
+        for row in rows:
+            row.pop("total", None)
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "selection": "all_sessions_matching_report_filters",
+            "grain": "one row per payment session",
         }
 
     def _breakdown(
@@ -268,6 +402,91 @@ def _relative_change(old: Any, new: Any) -> float | None:
     if old is None or new is None or float(old) == 0:
         return None
     return (float(new) - float(old)) / float(old)
+
+
+PERSIAN_MONTHS = {
+    "فروردین": 1,
+    "اردیبهشت": 2,
+    "خرداد": 3,
+    "تیر": 4,
+    "مرداد": 5,
+    "شهریور": 6,
+    "مهر": 7,
+    "آبان": 8,
+    "آذر": 9,
+    "دی": 10,
+    "بهمن": 11,
+    "اسفند": 12,
+}
+
+
+def _query_with_question_period(query: AdvisorQuery) -> AdvisorQuery:
+    """Resolve a Persian calendar month named in the question into an exact SQL period."""
+    question = _normalize_persian_digits(query.question or "")
+    month = next((number for name, number in PERSIAN_MONTHS.items() if name in question), None)
+    if month is None:
+        return query
+
+    explicit_years = [int(value) for value in re.findall(r"(?<!\d)(1[34]\d{2})(?!\d)", question)]
+    if explicit_years:
+        jalali_year = explicit_years[-1]
+    else:
+        midpoint = query.date_from + (query.date_to - query.date_from) / 2
+        candidate_years = range(query.date_to.year - 623, query.date_to.year - 619)
+        jalali_year = min(
+            candidate_years,
+            key=lambda year: abs((_jalali_month_period(year, month)[0] - midpoint).days),
+        )
+
+    date_from, date_to = _jalali_month_period(jalali_year, month)
+    return replace(query, date_from=date_from, date_to=date_to)
+
+
+def _normalize_persian_digits(value: str) -> str:
+    return value.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+
+
+def _jalali_month_period(year: int, month: int) -> tuple[date, date]:
+    start = _jalali_to_gregorian(year, month, 1)
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return start, _jalali_to_gregorian(next_year, next_month, 1) - timedelta(days=1)
+
+
+def _jalali_to_gregorian(jy: int, jm: int, jd: int) -> date:
+    """Convert a Solar Hijri date without introducing a runtime dependency."""
+    jy += 1595
+    days = (
+        -355668
+        + 365 * jy
+        + (jy // 33) * 8
+        + ((jy % 33 + 3) // 4)
+        + jd
+        + (jm - 1) * 31
+        - (jm // 7) * (jm - 7)
+    )
+    gy = 400 * (days // 146097)
+    days %= 146097
+    if days > 36524:
+        days -= 1
+        gy += 100 * (days // 36524)
+        days %= 36524
+        if days >= 365:
+            days += 1
+    gy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        gy += (days - 1) // 365
+        days = (days - 1) % 365
+    gd = days + 1
+    leap = gy % 4 == 0 and (gy % 100 != 0 or gy % 400 == 0)
+    month_days = (31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    gm = 1
+    for length in month_days:
+        if gd <= length:
+            break
+        gd -= length
+        gm += 1
+    return date(gy, gm, gd)
 
 
 def _predict_needs(overview: dict[str, Any], retry: dict[str, Any], dimensions: dict[str, list[dict[str, Any]]], trends: dict[str, Any]) -> list[dict[str, Any]]:

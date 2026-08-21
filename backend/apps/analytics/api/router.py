@@ -1,18 +1,22 @@
+import csv
 from pathlib import Path
 from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from django.db import connection
+from django.db import IntegrityError, connection, transaction
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Query, Router
 from ninja.errors import HttpError
 
 from apps.analytics.api.schemas import (
+    AccountUpdateRequest,
+    AdvisorEvidenceResponse,
     AdvisorRequest,
     AdvisorResponse,
+    AuthSessionResponse,
     DemoSessionResponse,
     EvidenceListResponse,
     FunnelResponse,
@@ -22,6 +26,7 @@ from apps.analytics.api.schemas import (
     InsightResponse,
     InsightTraceResponse,
     LoginRequest,
+    MerchantCredentialListResponse,
     MerchantListResponse,
     MetricFilters,
     OverviewResponse,
@@ -46,6 +51,14 @@ from apps.merchants.jwt import (
 from apps.merchants.models import Merchant, MerchantMembership
 
 router = Router(tags=["analytics"])
+
+
+def _can_manage_merchant_credentials(user: Any) -> bool:
+    """Grant credential management to real superusers and the local demo admin only."""
+    return bool(
+        user.is_superuser
+        or (settings.ENABLE_DEMO_AUTH and user.is_staff)
+    )
 
 
 @router.get("/health", response=HealthResponse, auth=None)
@@ -103,7 +116,88 @@ def token_login(request: HttpRequest, payload: LoginRequest) -> dict[str, Any]:
     user = authenticate(request, username=payload.username, password=payload.password)
     if user is None or not user.is_active:
         raise HttpError(401, "Invalid username or password")
-    return issue_token_pair(user)
+    # Super admins operate across the whole dashboard. Keep explicit memberships
+    # in sync as well, so every existing merchant-scoped service recognizes them.
+    if user.is_superuser:
+        _synchronize_merchants()
+        MerchantMembership.objects.bulk_create(
+            [
+                MerchantMembership(user=user, merchant=merchant)
+                for merchant in Merchant.objects.filter(is_active=True)
+            ],
+            ignore_conflicts=True,
+        )
+    token_pair = issue_token_pair(user)
+    token_pair["is_superuser"] = _can_manage_merchant_credentials(user)
+    return token_pair
+
+
+@router.get("/auth/session", response=AuthSessionResponse, auth=jwt_auth)
+def auth_session(request: HttpRequest) -> dict[str, Any]:
+    user = _authenticated_user(request)
+    return {
+        "username": user.username,
+        "is_superuser": _can_manage_merchant_credentials(user),
+    }
+
+
+@router.put("/auth/account", response=AuthSessionResponse, auth=jwt_auth)
+def update_account(request: HttpRequest, payload: AccountUpdateRequest) -> dict[str, Any]:
+    user = _authenticated_user(request)
+    if not user.check_password(payload.current_password):
+        raise HttpError(400, "Current password is incorrect")
+
+    username = payload.username.strip()
+    if not username:
+        raise HttpError(422, "Username cannot be empty")
+
+    user.username = username
+    if payload.new_password:
+        user.set_password(payload.new_password)
+    try:
+        with transaction.atomic():
+            user.save()
+    except IntegrityError as error:
+        raise HttpError(409, "Username is already in use") from error
+
+    return {
+        "username": user.username,
+        "is_superuser": _can_manage_merchant_credentials(user),
+    }
+
+
+@router.get(
+    "/admin/merchant-credentials",
+    response=MerchantCredentialListResponse,
+    auth=jwt_auth,
+)
+def merchant_credentials(request: HttpRequest) -> dict[str, Any]:
+    """Return seeded merchant logins to superusers only."""
+    if not _can_manage_merchant_credentials(request.user):
+        raise PermissionError("Superuser access is required")
+
+    credentials_candidates = (
+        Path(settings.BASE_DIR) / "merchant_credentials.csv",  # Docker mount
+        Path(settings.BASE_DIR).parent / "merchant_credentials.csv",  # local checkout
+    )
+    credentials_path = next((path for path in credentials_candidates if path.exists()), None)
+    credentials: dict[str, dict[str, str]] = {}
+    if credentials_path is not None:
+        with credentials_path.open(encoding="utf-8-sig", newline="") as source:
+            credentials = {row["merchant_key"]: row for row in csv.DictReader(source)}
+
+    items = []
+    for merchant in Merchant.objects.order_by("merchant_key"):
+        credential = credentials.get(merchant.merchant_key, {})
+        items.append(
+            {
+                "merchant_key": merchant.merchant_key,
+                "category_title": merchant.category_title,
+                "username": credential.get("username", ""),
+                "password": credential.get("password", ""),
+            }
+        )
+    return {"items": items}
 
 
 @router.post("/auth/refresh", response=TokenResponse, auth=None)
@@ -152,9 +246,11 @@ def demo_analytics_refresh(
 def list_merchants(request: HttpRequest, page: int = 1, page_size: int = 20) -> dict[str, Any]:
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
-    merchants = Merchant.objects.filter(
-        memberships__user=_authenticated_user(request), is_active=True
-    ).order_by("merchant_key")
+    user = _authenticated_user(request)
+    merchants = Merchant.objects.filter(is_active=True)
+    if not user.is_superuser:
+        merchants = merchants.filter(memberships__user=user)
+    merchants = merchants.order_by("merchant_key")
     offset = (page - 1) * page_size
     return {
         "items": list(
@@ -214,6 +310,12 @@ def merchant_advisor(
             model=settings.LLM_MODEL,
             timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
         )
+    merchant = Merchant.objects.get(merchant_key=merchant_key, is_active=True)
+    peer_keys = list(
+        Merchant.objects.filter(
+            is_active=True, category_id=merchant.category_id
+        ).exclude(merchant_key=merchant_key).values_list("merchant_key", flat=True)
+    ) if merchant.category_id else []
     return MerchantAdvisorService(narrative_generator=narrative_generator).analyze(
         AdvisorQuery(
             merchant_key=merchant_key,
@@ -224,7 +326,30 @@ def merchant_advisor(
             psp_code=payload.psp_code,
             issuer_bank_code=payload.issuer_bank_code,
             amount_bucket=payload.amount_bucket,
+            category_id=merchant.category_id,
+            category_title=merchant.category_title,
+            peer_merchant_keys=tuple(peer_keys),
         )
+    )
+
+
+@router.get(
+    "/merchants/{merchant_key}/advisor/evidence",
+    response=AdvisorEvidenceResponse,
+    auth=jwt_auth,
+)
+def merchant_advisor_evidence(
+    request: HttpRequest,
+    merchant_key: str,
+    filters: Query[MetricFilters],
+    page: int = 1,
+    page_size: int = 10,
+) -> dict[str, Any]:
+    """Page through all sessions matching the advisor's selected report filters."""
+    _require_merchant_access(request, merchant_key)
+    page, page_size = _pagination(page, page_size)
+    return MerchantAdvisorService().transaction_evidence(
+        _to_metric_query(merchant_key, filters), page=page, page_size=page_size
     )
 
 
@@ -272,6 +397,8 @@ def get_insight_evidence(
 
 @router.get("/data-quality/latest", response=IngestionRunResponse, auth=jwt_auth)
 def latest_data_quality(request: HttpRequest) -> IngestionRun:
+    if not request.user.is_staff:
+        raise PermissionError("Staff access is required")
     return IngestionRun.objects.filter(status=IngestionRun.Status.SUCCEEDED).latest("finished_at")
 
 
@@ -322,8 +449,13 @@ def refresh_analytics(
 
 
 def _require_merchant_access(request: HttpRequest, merchant_key: str) -> None:
+    user = _authenticated_user(request)
+    if user.is_superuser and Merchant.objects.filter(
+        merchant_key=merchant_key, is_active=True
+    ).exists():
+        return
     has_access = MerchantMembership.objects.filter(
-        user=_authenticated_user(request),
+        user=user,
         merchant__merchant_key=merchant_key,
         merchant__is_active=True,
     ).exists()

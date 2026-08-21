@@ -45,7 +45,7 @@ export function TraceDetail({ trace, formatPercent, formatCount }: TraceDetailPr
           </div>
           <ul className="flex flex-col gap-1.5">
             {trace.formulas.map((formula) => (
-              <li key={formula} className="font-mono text-xs text-muted-foreground" dir="ltr">
+              <li key={formula} className="font-sans text-xs leading-6 text-muted-foreground" dir="rtl">
                 {formula}
               </li>
             ))}
@@ -63,7 +63,7 @@ export function TraceDetail({ trace, formatPercent, formatCount }: TraceDetailPr
         <CardContent className="flex flex-wrap gap-2">
           {trace.filters.map((filter) => (
             <Badge key={filter.key} variant="secondary" className="gap-1">
-              {filter.label}: <span dir="ltr" className="font-mono">{filter.value}</span>
+              {filter.label}: <span dir="ltr" className="font-sans">{filter.value}</span>
             </Badge>
           ))}
           {trace.filters.length === 0 && <span className="text-sm text-muted-foreground">فیلتری اعمال نشده است.</span>}

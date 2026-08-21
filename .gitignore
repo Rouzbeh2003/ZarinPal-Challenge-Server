@@ -16,3 +16,4 @@ backend/data/warehouse/*
 *.sqlite3
 *.parquet
 other_challenge_data.csv.gz
+merchant_credentials.csv

@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { ArrowLeftRight, Bot, LayoutDashboard, Lightbulb, ListTree, SearchCheck } from "lucide-react";
+import { ArrowLeftRight, Bot, LayoutDashboard, Lightbulb, ListTree, SearchCheck, Store } from "lucide-react";
 
 export const appRoutes = {
   overview: "/",
@@ -9,6 +9,7 @@ export const appRoutes = {
   trace: "/trace",
   advisor: "/advisor",
   design: "/design",
+  merchants: "/admin/merchants",
 } as const;
 
 /** مسیر جزئیات یک بینش؛ `insightId` را با encodeURIComponent مقداردهی کنید. */
@@ -37,6 +38,18 @@ type NavigationSection = {
 };
 
 export const navigationSections: NavigationSection[] = [
+  {
+    title: "مدیریت",
+    items: [
+      {
+        key: "merchants",
+        label: "پذیرندگان",
+        path: appRoutes.merchants,
+        icon: Store,
+        description: "مشاهده اطلاعات ورود پذیرندگان",
+      },
+    ],
+  },
   {
     title: "تحلیل",
     items: [
@@ -73,7 +86,7 @@ export const navigationSections: NavigationSection[] = [
         label: "مشاور کسب‌وکار",
         path: appRoutes.advisor,
         icon: Bot,
-        description: "پیش‌بینی نیازها، فرصت‌های رشد و روایت LLM",
+        description: "پیش‌بینی نیازها، فرصت‌های رشد و روایت مشاور",
       },
     ],
   },

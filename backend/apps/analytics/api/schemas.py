@@ -42,11 +42,32 @@ class AdvisorResponse(Schema):
     dimensions: dict[str, list[dict[str, Any]]]
     retry: dict[str, Any]
     trends: dict[str, Any]
+    peer_comparison: dict[str, Any]
     predicted_needs: list[dict[str, Any]]
     recommendations: list[dict[str, Any]]
+    transaction_evidence: dict[str, Any]
     advisor_narrative: dict[str, Any] | None
     narrative_source: str
     methodology: dict[str, str]
+
+
+class AdvisorEvidenceItemResponse(Schema):
+    session_key: str
+    metric_date: date
+    amount: int
+    final_status: str
+    attempts_count: int
+    final_psp_code: str | None
+    final_issuer_bank_code: str | None
+
+
+class AdvisorEvidenceResponse(Schema):
+    items: list[AdvisorEvidenceItemResponse]
+    page: int
+    page_size: int
+    total: int
+    selection: str
+    grain: str
 
 
 class HealthResponse(Schema):
@@ -63,6 +84,12 @@ class LoginRequest(Schema):
     password: str
 
 
+class AccountUpdateRequest(Schema):
+    current_password: str = Field(min_length=1, max_length=128)
+    username: str = Field(min_length=1, max_length=150)
+    new_password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
 class RefreshRequest(Schema):
     refresh_token: str
 
@@ -72,11 +99,17 @@ class TokenResponse(Schema):
     refresh_token: str
     token_type: str
     expires_in: int
+    is_superuser: bool
 
 
 class DemoSessionResponse(TokenResponse):
     username: str
     merchant_count: int
+
+
+class AuthSessionResponse(Schema):
+    username: str
+    is_superuser: bool
 
 
 class MerchantResponse(Schema):
@@ -90,6 +123,17 @@ class MerchantListResponse(Schema):
     page: int
     page_size: int
     total: int
+
+
+class MerchantCredentialResponse(Schema):
+    merchant_key: str
+    category_title: str
+    username: str
+    password: str
+
+
+class MerchantCredentialListResponse(Schema):
+    items: list[MerchantCredentialResponse]
 
 
 class DailyTrendResponse(Schema):
@@ -179,9 +223,12 @@ class InsightResponse(Schema):
     metric: InsightMetricResponse
     financial_impact: FinancialImpactResponse
     drivers: list[dict[str, Any]]
-    recommended_actions: list[dict[str, str]]
+    recommended_actions: list[dict[str, Any]]
     confidence: float
     coverage: float
+    coverage_details: dict[str, Any] | None = None
+    adjusted_analysis: dict[str, Any] | None = None
+    action_plan: dict[str, Any] | None = None
     period: dict[str, str]
     baseline_period: dict[str, str]
     trace_id: str

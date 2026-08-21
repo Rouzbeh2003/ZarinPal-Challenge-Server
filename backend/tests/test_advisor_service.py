@@ -5,7 +5,11 @@ from typing import Any
 import duckdb
 
 from apps.analytics.repositories.duckdb_repository import DuckDbRepository
-from apps.analytics.services.advisor import AdvisorQuery, MerchantAdvisorService
+from apps.analytics.services.advisor import (
+    AdvisorQuery,
+    MerchantAdvisorService,
+    _query_with_question_period,
+)
 
 
 class StubNarrativeGenerator:
@@ -18,6 +22,27 @@ class StubNarrativeGenerator:
 class FailingNarrativeGenerator:
     def generate(self, *, question: str | None, evidence: dict[str, Any]) -> dict[str, Any]:
         raise TimeoutError("provider timeout")
+
+
+def test_advisor_resolves_persian_month_from_question() -> None:
+    query = AdvisorQuery(
+        "M1", date(2026, 1, 1), date(2026, 6, 30), "لطفاً ماه اردیبهشت را تحلیل کن"
+    )
+
+    resolved = _query_with_question_period(query)
+
+    assert resolved.date_from == date(2026, 4, 21)
+    assert resolved.date_to == date(2026, 5, 21)
+
+
+def test_advisor_resolves_explicit_persian_year_with_persian_digits() -> None:
+    query = AdvisorQuery(
+        "M1", date(2025, 1, 1), date(2026, 12, 31), "اردیبهشت ۱۴۰۵ را بررسی کن"
+    )
+
+    resolved = _query_with_question_period(query)
+
+    assert (resolved.date_from, resolved.date_to) == (date(2026, 4, 21), date(2026, 5, 21))
 
 
 def test_advisor_builds_aggregate_recommendations_and_grounded_narrative(tmp_path: Path) -> None:
@@ -36,6 +61,10 @@ def test_advisor_builds_aggregate_recommendations_and_grounded_narrative(tmp_pat
     assert report["methodology"]["claims"] == "forecasted_needs_are_ranked_hypotheses_not_causation"
     assert report["predicted_needs"][0]["code"] == "checkout_experience"
     assert "trends" in report
+    assert report["transaction_evidence"]["total"] == 100
+    assert report["transaction_evidence"]["page_size"] == 10
+    assert len(report["transaction_evidence"]["items"]) == 10
+    assert "payer_card" not in str(report["transaction_evidence"])
 
 
 def test_advisor_returns_complete_deterministic_report_when_llm_fails(tmp_path: Path) -> None:
@@ -49,6 +78,43 @@ def test_advisor_returns_complete_deterministic_report_when_llm_fails(tmp_path: 
     assert report["advisor_narrative"] is None
     assert report["narrative_source"] == "deterministic_engine_fallback"
     assert len(report["executive_summary"]) >= 3
+
+
+def test_advisor_peer_comparison_is_aggregate_and_has_no_peer_identifiers(tmp_path: Path) -> None:
+    database_path = tmp_path / "advisor.duckdb"
+    _create_session_fact(database_path)
+    connection = duckdb.connect(str(database_path))
+    connection.execute(
+        "INSERT INTO session_fact SELECT replace(session_key, 'S', 'P2-'), "
+        "'M2', terminal_key, amount, final_status, is_successful, has_real_attempt, "
+        "has_bank_entry, has_retry, recovered_after_retry, metric_date, final_psp_code, "
+        "final_issuer_bank_code, amount_bucket, attempts_count, first_attempt_at, "
+        "dataset_version, final_switch_response_code, verify_type FROM session_fact WHERE merchant_key='M1'"
+    )
+    connection.execute(
+        "INSERT INTO session_fact SELECT replace(session_key, 'S', 'P3-'), "
+        "'M3', terminal_key, amount, final_status, is_successful, has_real_attempt, "
+        "has_bank_entry, has_retry, recovered_after_retry, metric_date, final_psp_code, "
+        "final_issuer_bank_code, amount_bucket, attempts_count, first_attempt_at, "
+        "dataset_version, final_switch_response_code, verify_type FROM session_fact WHERE merchant_key='M1'"
+    )
+    connection.close()
+
+    report = MerchantAdvisorService(DuckDbRepository(database_path)).analyze(
+        AdvisorQuery(
+            "M1", date(2026, 6, 1), date(2026, 6, 1), category_id="12",
+            category_title="فروشگاه", peer_merchant_keys=("M2", "M3"),
+        )
+    )
+
+    comparison = report["peer_comparison"]
+    assert comparison["available"] is True
+    assert comparison["peer_count"] == 2
+    assert comparison["metrics"][0]["merchant_value"] == comparison["metrics"][0]["peer_value"]
+    assert comparison["metrics"][0]["peer_equal_weight_value"] == 0.5
+    assert comparison["metrics"][0]["peer_median_value"] == 0.5
+    assert comparison["metrics"][0]["merchant_percentile"] == 1.0
+    assert "M2" not in str(comparison) and "M3" not in str(comparison)
 
 
 def _create_session_fact(database_path: Path) -> None:

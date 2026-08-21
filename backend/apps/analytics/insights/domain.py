@@ -19,6 +19,7 @@ class InsightPolicy:
     high_change: float = 0.10
     critical_change: float = 0.20
     maximum_drivers: int = 5
+    target_gap_recovery_fraction: float = 0.50
 
 
 @dataclass(frozen=True)

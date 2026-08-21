@@ -65,7 +65,7 @@ export function DesignSystemShowcase() {
                 <DataState kind="empty" title="داده‌ای برای نمایش نیست" description="فیلترها یا بازه زمانی انتخاب‌شده را تغییر دهید." actionLabel="پاک‌کردن فیلترها" onAction={() => undefined} />
                 <DataState kind="error" title="دریافت داده ناموفق بود" description="ارتباط با منبع داده برقرار نشد. دوباره تلاش کنید." actionLabel="تلاش دوباره" onAction={() => undefined} />
               </div>
-              <Alert className="mt-6" variant="destructive"><CircleAlert aria-hidden="true" /><AlertTitle>اصل شفافیت</AlertTitle><AlertDescription>خطا، نبود داده و داده واقعی نباید در رابط یکسان نمایش داده شوند.</AlertDescription></Alert>
+              <Alert className="mt-6" variant="destructive"><CircleAlert aria-hidden="true" /><AlertTitle>اصل شفافیت</AlertTitle><AlertDescription>خطا و نبود داده باید در رابط به‌روشنی از یکدیگر متمایز باشند.</AlertDescription></Alert>
             </TabsContent>
           </Tabs>
         </div>

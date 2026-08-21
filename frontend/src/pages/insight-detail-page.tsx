@@ -88,6 +88,25 @@ export function InsightDetailPage() {
         <MetricValueCard label="تغییر نسبی" value={formatSignedPercent(insight.metric.relativeChange)} tone={insight.metric.relativeChange < 0 ? "negative" : "positive"} />
       </section>
 
+      {insight.adjustedAnalysis !== undefined && insight.adjustedAnalysis.adjustedEffect !== undefined && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Scale aria-hidden="true" className="size-4 text-primary" />
+              اثر خام در برابر اثر تعدیل‌شده بر اساس PSP و بازه مبلغ
+            </CardTitle>
+            <CardDescription>
+              تعدیل مستقیم بر اساس ترکیب PSP و بازه مبلغ؛ برای تفکیک تغییر عملکرد از تغییر ترکیب تراکنش‌ها
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <MetricComparison label="اثر خام" value={formatSignedPercent(insight.adjustedAnalysis.rawEffect ?? insight.metric.absoluteChange)} />
+            <MetricComparison label="اثر تعدیل‌شده" value={formatSignedPercent(insight.adjustedAnalysis.adjustedEffect)} />
+            <MetricComparison label="پوشش مشترک لایه‌ها" value={formatPercent(insight.adjustedAnalysis.commonSupportCoverage)} />
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -154,6 +173,11 @@ export function InsightDetailPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {insight.actionPlan !== undefined && (
+            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-6 text-amber-100">
+              <strong>ظرفیت مالی مشترک برنامه:</strong> {formatAmount(insight.actionPlan.potentialFinancialImpact)} ریال. {insight.actionPlan.note}
+            </div>
+          )}
           {insight.recommendedActions.length === 0 ? (
             <p className="text-sm text-muted-foreground">اقدام پیشنهادی ثبت نشده است.</p>
           ) : (
@@ -166,6 +190,14 @@ export function InsightDetailPage() {
                   <div className="flex flex-col gap-1">
                     <span className="text-sm font-medium">{action.title}</span>
                     <span className="text-xs leading-5 text-muted-foreground">{action.description}</span>
+                    {action.targetValue !== undefined && (
+                      <span className="text-xs text-primary">
+                        هدف: {formatPercent(action.targetValue)} در {action.horizonDays?.toLocaleString("fa-IR")} روز
+                        {action.potentialFinancialImpact !== undefined && action.potentialFinancialImpact > 0
+                          ? ` · سهم از ظرفیت مشترک ${formatAmount(action.potentialFinancialImpact)} ریال (غیرقابل‌جمع)`
+                          : ""}
+                      </span>
+                    )}
                   </div>
                 </li>
               ))}
@@ -180,8 +212,14 @@ export function InsightDetailPage() {
           اطمینان: <strong className="font-medium tabular-nums">{formatPercent(insight.confidence)}</strong>
         </span>
         <span>
-          پوشش داده: <strong className="font-medium tabular-nums">{formatPercent(insight.coverage)}</strong>
+          پوشش متریک اصلی: <strong className="font-medium tabular-nums">{formatPercent(insight.coverage)}</strong>
         </span>
+        {insight.coverageDetails !== undefined && (
+          <span className="text-muted-foreground">
+            پوشش تحلیل تعدیل‌شده: <strong className="font-medium tabular-nums">{formatPercent(insight.coverageDetails.adjustedCoverage)}</strong>
+            {` · ${insight.coverageDetails.excludedRecords.toLocaleString("fa-IR")} کنارگذاشته · ${insight.coverageDetails.adjustedNullRecords.toLocaleString("fa-IR")} ناقص برای تعدیل`}
+          </span>
+        )}
         <span className="text-muted-foreground">
           بازه: {formatDateRange(insight.period)}
         </span>
@@ -245,4 +283,13 @@ function formatDateRange(period: { dateFrom: string; dateTo: string }): string {
   const to = new Date(period.dateTo);
   const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
   return `${from.toLocaleDateString("fa-IR", options)} تا ${to.toLocaleDateString("fa-IR", options)}`;
+}
+
+function MetricComparison({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
+    </div>
+  );
 }

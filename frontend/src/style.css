@@ -24,6 +24,14 @@
   --font-sans: "Vazirmatn Variable", Vazirmatn, IRANSansX, Tahoma, sans-serif;
 }
 
+@layer utilities {
+  .login-grid {
+    background-image: linear-gradient(rgba(148,163,184,.035) 1px, transparent 1px), linear-gradient(90deg,rgba(148,163,184,.035) 1px, transparent 1px);
+    background-size: 46px 46px;
+    mask-image: linear-gradient(to bottom, black, transparent 90%);
+  }
+}
+
 @layer base {
   * { @apply border-border; }
   html { direction: rtl; }

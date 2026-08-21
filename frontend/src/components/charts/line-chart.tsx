@@ -35,21 +35,27 @@ export function LineChart({
     return <ChartEmpty width={width} height={height} message="داده‌ای برای نمودار نیست" />;
   }
 
-  const reversedPoints = [...points].reverse();
+  const reversedPoints = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)).reverse();
+
+  if (reversedPoints.length === 0) {
+    return <ChartEmpty width={width} height={height} message="داده معتبر برای نمودار نیست" />;
+  }
 
   const { plotWidth, plotHeight } = computePlotSize(width, height);
   const { xFn, yFn } = buildScales(reversedPoints, plotWidth, plotHeight);
 
   const pathD = reversedPoints.map((p, i) => `${i === 0 ? "M" : "L"} ${xFn(p.x)} ${yFn(p.y)}`).join(" ");
-  const areaPath = `${pathD} L ${xFn(reversedPoints[reversedPoints.length - 1].x)} ${plotHeight} L ${xFn(reversedPoints[0].x)} ${plotHeight} Z`;
+  const plotBottom = CHART_PADDING_Y + plotHeight;
+  const areaPath = `${pathD} L ${xFn(reversedPoints[reversedPoints.length - 1].x)} ${plotBottom} L ${xFn(reversedPoints[0].x)} ${plotBottom} Z`;
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full overflow-hidden">
       <svg
         role="img"
         aria-label={ariaLabel}
         viewBox={`0 0 ${width} ${height}`}
-        className="mx-auto block h-auto w-full max-w-full"
+        className="mx-auto block h-56 w-full max-w-3xl"
+        preserveAspectRatio="xMidYMid meet"
       >
         <defs>
           <linearGradient id={`grad-${chartId}`} x1="0" y1="0" x2="0" y2="1">
@@ -59,7 +65,12 @@ export function LineChart({
         </defs>
 
         <clipPath id={`clip-${chartId}`}>
-          <rect x={0} y={0} width={plotWidth} height={plotHeight} />
+          <rect
+            x={CHART_PADDING_X - DOT_RADIUS}
+            y={CHART_PADDING_Y - DOT_RADIUS}
+            width={plotWidth + DOT_RADIUS * 2}
+            height={plotHeight + DOT_RADIUS * 2}
+          />
         </clipPath>
 
         <g clip={`url(#clip-${chartId})`}>
@@ -74,19 +85,19 @@ export function LineChart({
             vectorEffect="non-scaling-stroke"
           />
           {reversedPoints.map((p, i) => (
-            <circle key={i} cx={xFn(p.x)} cy={yFn(p.y)} r={3.5} fill={dotColor} stroke={stroke} strokeWidth={1.5}>
+            <circle key={i} cx={xFn(p.x)} cy={yFn(p.y)} r={DOT_RADIUS} fill={dotColor} stroke={stroke} strokeWidth={1.5}>
               <title>{`${i + 1}`}</title>
             </circle>
           ))}
         </g>
 
-        <g>
+        <g clip={`url(#clip-${chartId})`}>
           {reversedPoints.map((p, i) => (
             <circle
               key={`hit-${i}`}
               cx={xFn(p.x)}
               cy={yFn(p.y)}
-              r={18}
+              r={HIT_RADIUS}
               fill="transparent"
               className="cursor-pointer"
             >
@@ -99,8 +110,10 @@ export function LineChart({
   );
 }
 
-const CHART_PADDING_X = 8;
-const CHART_PADDING_Y = 8;
+const DOT_RADIUS = 3.5;
+const HIT_RADIUS = 10;
+const CHART_PADDING_X = HIT_RADIUS + 2;
+const CHART_PADDING_Y = HIT_RADIUS + 2;
 
 function computePlotSize(width: number, height: number): { plotWidth: number; plotHeight: number } {
   return { plotWidth: width - CHART_PADDING_X * 2, plotHeight: height - CHART_PADDING_Y * 2 };
@@ -111,11 +124,11 @@ function buildScales(points: ChartPoint[], plotWidth: number, plotHeight: number
   const maxX = Math.max(...points.map((p) => p.x));
   const minY = Math.min(...points.map((p) => p.y));
   const maxY = Math.max(...points.map((p) => p.y));
-  const spanX = Math.max(maxX - minX, 1);
-  const spanY = Math.max(maxY - minY, 1);
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
 
-  const xFn = (x: number) => ((x - minX) / spanX) * plotWidth;
-  const yFn = (y: number) => plotHeight - ((y - minY) / spanY) * plotHeight;
+  const xFn = (x: number) => CHART_PADDING_X + (spanX === 0 ? 0.5 : (x - minX) / spanX) * plotWidth;
+  const yFn = (y: number) => CHART_PADDING_Y + plotHeight - (spanY === 0 ? 0.5 : (y - minY) / spanY) * plotHeight;
 
   return { xFn, yFn };
 }

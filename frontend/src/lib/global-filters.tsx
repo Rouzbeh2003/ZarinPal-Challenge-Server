@@ -3,7 +3,7 @@ import type { Merchant } from "@/api/types";
 import { getMerchants } from "@/api/adapter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-export type DateRangePreset = "7d" | "30d" | "90d" | "all" | "custom";
+export type DateRangePreset = "7d" | "30d" | "90d" | "all";
 
 export type DateRangeOption = {
   value: DateRangePreset;
@@ -15,7 +15,6 @@ export const dateRangeOptions: DateRangeOption[] = [
   { value: "30d", label: "۳۰ روز اخیر" },
   { value: "90d", label: "۹۰ روز اخیر" },
   { value: "all", label: "همه (شش ماه)" },
-  { value: "custom", label: "بازه دلخواه" },
 ];
 
 /**
@@ -112,29 +111,3 @@ export function DateRangeControl() {
   );
 }
 
-export function MerchantControl() {
-  const { merchantKey, setMerchantKey, merchants, merchantsLoading } = useGlobalFilters();
-
-  return (
-    <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-      <span>پذیرنده</span>
-      <Select value={merchantKey} onValueChange={setMerchantKey}>
-        <SelectTrigger className="w-full min-w-36" aria-label="انتخاب پذیرنده">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {merchantsLoading && (
-            <SelectItem value={merchantKey} disabled>
-              در حال بارگذاری...
-            </SelectItem>
-          )}
-          {merchants.map((merchant) => (
-            <SelectItem key={merchant.merchantKey} value={merchant.merchantKey}>
-              {merchant.title}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </label>
-  );
-}

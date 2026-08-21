@@ -4,11 +4,11 @@ import hmac
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AbstractBaseUser
+from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils import timezone
 from ninja.security import HttpBearer
@@ -48,7 +48,7 @@ def decode_token(token: str, expected_type: str) -> dict[str, Any]:
         ).digest()
         if not hmac.compare_digest(_decode_part(supplied_signature), expected_signature):
             raise InvalidTokenError("Invalid token signature")
-        payload = json.loads(_decode_part(body))
+        payload = cast(dict[str, Any], json.loads(_decode_part(body)))
         now = int(datetime.now(UTC).timestamp())
         if payload.get("exp", 0) <= now:
             raise InvalidTokenError("Token has expired")
@@ -63,7 +63,7 @@ def decode_token(token: str, expected_type: str) -> dict[str, Any]:
         raise InvalidTokenError("Malformed token") from error
 
 
-def _claims(user: AbstractBaseUser, token_type: str, lifetime: timedelta, jti: uuid.UUID) -> dict[str, Any]:
+def _claims(user: User, token_type: str, lifetime: timedelta, jti: uuid.UUID) -> dict[str, Any]:
     now = datetime.now(UTC)
     return {
         "sub": str(user.pk), "type": token_type, "jti": str(jti),
@@ -72,7 +72,7 @@ def _claims(user: AbstractBaseUser, token_type: str, lifetime: timedelta, jti: u
     }
 
 
-def issue_token_pair(user: AbstractBaseUser) -> dict[str, Any]:
+def issue_token_pair(user: User) -> dict[str, Any]:
     access_lifetime = timedelta(minutes=settings.JWT_ACCESS_TOKEN_MINUTES)
     refresh_lifetime = timedelta(days=settings.JWT_REFRESH_TOKEN_DAYS)
     access = _encode(_claims(user, "access", access_lifetime, uuid.uuid4()))
@@ -82,7 +82,13 @@ def issue_token_pair(user: AbstractBaseUser) -> dict[str, Any]:
         user=user, jti=refresh_jti, token_hash=hashlib.sha256(refresh.encode()).hexdigest(),
         expires_at=timezone.now() + refresh_lifetime,
     )
-    return {"access_token": access, "refresh_token": refresh, "token_type": "Bearer", "expires_in": int(access_lifetime.total_seconds())}
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "Bearer",
+        "expires_in": int(access_lifetime.total_seconds()),
+        "is_superuser": bool(user.is_superuser),
+    }
 
 
 @transaction.atomic

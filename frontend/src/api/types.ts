@@ -118,6 +118,22 @@ export type InsightDriver = {
 export type RecommendedAction = {
   title: string;
   description: string;
+  targetMetric?: string;
+  targetValue?: number;
+  horizonDays?: number;
+  potentialFinancialImpact?: number;
+  impactIsAdditive?: boolean;
+  impactScope?: string;
+};
+
+export type AdjustedAnalysis = {
+  method: string;
+  rawEffect?: number;
+  adjustedEffect?: number;
+  currentAdjustedRate?: number;
+  baselineAdjustedRate?: number;
+  commonSupportCoverage: number;
+  strataCount: number;
 };
 
 export type Insight = {
@@ -133,6 +149,13 @@ export type Insight = {
   recommendedActions: RecommendedAction[];
   confidence: number;
   coverage: number;
+  coverageDetails?: {
+    inputRecords: number; excludedRecords: number;
+    metricAnalyzedRecords: number; metricNullRecords: number; metricCoverage: number;
+    adjustedAnalyzedRecords: number; adjustedNullRecords: number; adjustedCoverage: number;
+  };
+  adjustedAnalysis?: AdjustedAnalysis;
+  actionPlan?: { potentialFinancialImpact: number; impactIsAdditive: boolean; note: string };
   period: InsightPeriod;
   baselinePeriod: InsightPeriod;
   traceId: string;
@@ -264,6 +287,23 @@ export type AdvisorNarrative = {
   caveats: string[];
 };
 
+export type AdvisorTransactionEvidence = {
+  items: Array<{
+    session_key: string;
+    metric_date: string;
+    amount: number;
+    final_status: string;
+    attempts_count: number;
+    final_psp_code: string | null;
+    final_issuer_bank_code: string | null;
+  }>;
+  total: number;
+  page: number;
+  page_size: number;
+  selection: "all_sessions_matching_report_filters";
+  grain: "one row per payment session";
+};
+
 export type AdvisorResponse = {
   merchant_key: string;
   period: { date_from: string; date_to: string };
@@ -272,8 +312,24 @@ export type AdvisorResponse = {
   dimensions: AdvisorDimensions;
   retry: Record<string, unknown>;
   trends: AdvisorTrends;
+  peer_comparison: {
+    category_id: string;
+    category_title: string;
+    peer_count: number;
+    available: boolean;
+    privacy: "aggregate_cohort_only";
+    benchmark_methods?: string[];
+    metrics: Array<{
+      code: string; label: string; merchant_value: number | null;
+      peer_value: number | null; difference: number | null; unit: "percent" | "irr";
+      peer_equal_weight_value?: number | null;
+      peer_median_value?: number | null;
+      merchant_percentile?: number | null;
+    }>;
+  };
   predicted_needs: AdvisorPredictedNeed[];
   recommendations: AdvisorRecommendation[];
+  transaction_evidence?: AdvisorTransactionEvidence;
   advisor_narrative: AdvisorNarrative | null;
   narrative_source: "llm" | "deterministic_engine" | "deterministic_engine_fallback";
   methodology: Record<string, string>;

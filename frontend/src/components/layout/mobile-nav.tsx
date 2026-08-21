@@ -2,6 +2,7 @@ import { Menu, Search, X } from "lucide-react";
 import { appRoutes, findNavigationItem, navigationSections } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth";
 
 type MobileNavProps = {
   currentPath: string;
@@ -27,6 +28,7 @@ export function MobileNav({ currentPath, onNavigate }: MobileNavProps) {
 }
 
 function DetailsNav({ currentPath, onNavigate }: MobileNavProps) {
+  const { authState } = useAuth();
   const handleClose = () => {
     document.getElementById("mobile-nav-details")?.removeAttribute("open");
   };
@@ -65,7 +67,7 @@ function DetailsNav({ currentPath, onNavigate }: MobileNavProps) {
           </button>
         </div>
 
-        {navigationSections.map((section) => (
+        {navigationSections.filter((section) => section.title !== "مدیریت" || (authState.status === "ready" && authState.isSuperuser)).map((section) => (
           <div key={section.title} className="flex flex-col gap-1">
             <p className="px-2 pb-1 pt-3 text-xs font-medium text-muted-foreground">
               {section.title}

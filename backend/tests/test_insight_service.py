@@ -28,10 +28,49 @@ def test_engine_persists_explainable_insight_and_masks_evidence(tmp_path: Path) 
     assert insight.payload["metric"]["current"] == 0.5
     assert insight.payload["metric"]["baseline"] == 0.8
     assert insight.payload["financial_impact"]["amount"] == 60_000_000
+    assert insight.payload["coverage"] == 1.0
+    assert insight.payload["coverage_details"]["metric_analyzed_records"] == 200
+    assert insight.payload["coverage_details"]["adjusted_analyzed_records"] == 200
+    assert insight.payload["adjusted_analysis"]["raw_effect"] == pytest.approx(-0.3)
+    assert insight.payload["adjusted_analysis"]["adjusted_effect"] == pytest.approx(-0.3)
+    action = insight.payload["recommended_actions"][0]
+    assert action["target_value"] == pytest.approx(0.65)
+    assert action["horizon_days"] == 1
+    assert action["potential_financial_impact"] == 30_000_000
+    assert action["impact_is_additive"] is False
+    assert insight.payload["recommended_actions"][1]["potential_financial_impact"] == 0
+    assert insight.payload["action_plan"]["impact_is_additive"] is False
+    assert insight.trace["target_policy"]["is_data_derived"] is False
+    assert insight.trace["target_policy"]["configurable"] is True
     assert insight.trace["current_calculation"]["denominator"] == 100
     evidence = InsightService(repository).evidence(insight, page=1, page_size=1)
     assert evidence["items"][0]["payer_card_masked"] == "***1234"
     assert "payer-card-1234" not in str(evidence)
+
+
+@pytest.mark.django_db
+def test_coverage_counts_null_and_excluded_records(tmp_path: Path) -> None:
+    database_path = tmp_path / "coverage.duckdb"
+    _create_session_fact(database_path)
+    connection = duckdb.connect(str(database_path))
+    connection.execute(
+        "UPDATE session_fact SET final_psp_code = NULL WHERE session_key = '2026-02-01-0'"
+    )
+    connection.execute(
+        "UPDATE session_fact SET final_status = 'excluded' WHERE session_key = '2026-02-01-1'"
+    )
+    connection.close()
+
+    insight = InsightService(DuckDbRepository(database_path)).generate(
+        InsightQuery("M1", date(2026, 2, 1), date(2026, 2, 1))
+    )
+
+    assert insight is not None
+    assert insight.payload["coverage"] == pytest.approx(199 / 200)
+    assert insight.payload["coverage_details"]["adjusted_coverage"] == pytest.approx(198 / 200)
+    assert insight.payload["coverage_details"]["excluded_records"] == 1
+    assert insight.payload["coverage_details"]["metric_null_records"] == 0
+    assert insight.payload["coverage_details"]["adjusted_null_records"] == 1
 
 
 @pytest.mark.django_db

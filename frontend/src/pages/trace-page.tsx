@@ -83,7 +83,7 @@ export function TracePage() {
       {insightId !== undefined && (
         <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
           <Info aria-hidden="true" className="size-4 shrink-0 text-primary" />
-          این ردیابی مربوط به بینش با شناسه <span dir="ltr" className="font-mono text-xs">{insightId}</span> است و تنها برای همان معیار معتبر است.
+          این ردیابی مربوط به بینش با شناسه <span dir="ltr" className="font-sans text-xs">{insightId}</span> است و تنها برای همان معیار معتبر است.
         </div>
       )}
 

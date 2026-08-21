@@ -75,16 +75,33 @@ class InsightService:
             else 0
         )
         drivers = self._find_drivers(current_query, baseline_query, is_drop=is_drop)
+        quality = self._analysis_quality(current_query, baseline_query)
+        adjusted = self._adjusted_analysis(current_query, baseline_query)
         dataset_version = self._dataset_version()
         insight_type = "payment_success_drop" if is_drop else "payment_success_improvement"
         severity = determine_severity(
             assessment.absolute_change, financial_impact, int(baseline["successful_amount"])
         )
         payload = self._build_payload(
-            query, baseline_start, baseline_end, assessment, financial_impact, drivers
+            query,
+            baseline_start,
+            baseline_end,
+            assessment,
+            financial_impact,
+            drivers,
+            quality,
+            adjusted,
         )
         trace = self._build_trace(
-            query, baseline_start, baseline_end, current, baseline, drivers, dataset_version
+            query,
+            baseline_start,
+            baseline_end,
+            current,
+            baseline,
+            drivers,
+            dataset_version,
+            quality,
+            adjusted,
         )
         title, summary = _narrative(assessment.absolute_change, drivers, is_drop)
         with transaction.atomic():
@@ -200,6 +217,97 @@ class InsightService:
             raise RuntimeError("No active analytics dataset is available")
         return str(row["version"])
 
+    def _analysis_quality(
+        self, current: MetricQuery, baseline: MetricQuery
+    ) -> dict[str, Any]:
+        counts = {
+            "input_records": 0,
+            "excluded_records": 0,
+            "metric_analyzed_records": 0,
+            "metric_null_records": 0,
+            "adjusted_analyzed_records": 0,
+            "adjusted_null_records": 0,
+        }
+        for metric_query in (current, baseline):
+            where_sql, parameters = _build_filters(metric_query)
+            row = self.repository.fetch_one(
+                f"""SELECT count(*) AS input_records,
+                           count(*) FILTER (WHERE final_status = 'excluded') AS excluded_records,
+                           count(*) FILTER (WHERE final_status IS DISTINCT FROM 'excluded'
+                               AND final_status IS NOT NULL AND is_successful IS NOT NULL)
+                               AS metric_analyzed_records,
+                           count(*) FILTER (WHERE final_status IS DISTINCT FROM 'excluded' AND
+                               (final_status IS NULL OR is_successful IS NULL))
+                               AS metric_null_records,
+                           count(*) FILTER (WHERE final_status IS DISTINCT FROM 'excluded'
+                               AND final_status IS NOT NULL AND is_successful IS NOT NULL
+                               AND amount IS NOT NULL AND final_psp_code IS NOT NULL
+                               AND amount_bucket IS NOT NULL) AS adjusted_analyzed_records,
+                           count(*) FILTER (WHERE final_status IS DISTINCT FROM 'excluded' AND
+                               (final_status IS NULL OR is_successful IS NULL OR amount IS NULL
+                                OR final_psp_code IS NULL OR amount_bucket IS NULL))
+                               AS adjusted_null_records
+                    FROM session_fact WHERE {where_sql}""",
+                parameters,
+            ) or {}
+            for key in counts:
+                counts[key] += int(row.get(key, 0))
+        return {
+            **counts,
+            "metric_coverage": (
+                counts["metric_analyzed_records"] / counts["input_records"]
+                if counts["input_records"] else 0.0
+            ),
+            "adjusted_coverage": (
+                counts["adjusted_analyzed_records"] / counts["input_records"]
+                if counts["input_records"] else 0.0
+            ),
+        }
+
+    def _adjusted_analysis(
+        self, current: MetricQuery, baseline: MetricQuery
+    ) -> dict[str, Any]:
+        """Directly standardize period rates to the baseline PSP/amount mix."""
+        current_rows = self._breakdown(current, "concat(final_psp_code, '|', amount_bucket)")
+        baseline_rows = self._breakdown(baseline, "concat(final_psp_code, '|', amount_bucket)")
+        current_by_stratum = {str(row["value"]): row for row in current_rows if row["value"]}
+        baseline_by_stratum = {str(row["value"]): row for row in baseline_rows if row["value"]}
+        shared = set(current_by_stratum) & set(baseline_by_stratum)
+        shared_baseline_sessions = sum(int(baseline_by_stratum[key]["total"]) for key in shared)
+        all_baseline_sessions = sum(int(row["total"]) for row in baseline_rows)
+        if not shared_baseline_sessions:
+            return {
+                "method": "direct_standardization_psp_amount_bucket",
+                "raw_effect": None,
+                "adjusted_effect": None,
+                "current_adjusted_rate": None,
+                "baseline_adjusted_rate": None,
+                "common_support_coverage": 0.0,
+                "strata_count": 0,
+            }
+        current_adjusted = sum(
+            _row_rate(current_by_stratum[key]) * int(baseline_by_stratum[key]["total"])
+            for key in shared
+        ) / shared_baseline_sessions
+        baseline_adjusted = sum(
+            _row_rate(baseline_by_stratum[key]) * int(baseline_by_stratum[key]["total"])
+            for key in shared
+        ) / shared_baseline_sessions
+        current_total = sum(int(row["total"]) for row in current_rows)
+        baseline_total = sum(int(row["total"]) for row in baseline_rows)
+        current_raw = sum(int(row["successful"]) for row in current_rows) / current_total
+        baseline_raw = sum(int(row["successful"]) for row in baseline_rows) / baseline_total
+        return {
+            "method": "direct_standardization_psp_amount_bucket",
+            "raw_effect": current_raw - baseline_raw,
+            "adjusted_effect": current_adjusted - baseline_adjusted,
+            "current_adjusted_rate": current_adjusted,
+            "baseline_adjusted_rate": baseline_adjusted,
+            "common_support_coverage": shared_baseline_sessions / all_baseline_sessions
+            if all_baseline_sessions else 0.0,
+            "strata_count": len(shared),
+        }
+
     def _build_payload(
         self,
         query: InsightQuery,
@@ -208,6 +316,8 @@ class InsightService:
         assessment: Any,
         financial_impact: int,
         drivers: list[dict[str, Any]],
+        quality: dict[str, Any],
+        adjusted: dict[str, Any],
     ) -> dict[str, Any]:
         is_drop = assessment.absolute_change < 0
         return {
@@ -224,9 +334,26 @@ class InsightService:
                 "method": "Estimated missing successful sessions at baseline rate multiplied by current average successful session amount; potential impact, not confirmed loss.",
             },
             "drivers": drivers,
-            "recommended_actions": _recommended_actions(drivers, is_drop),
+            "recommended_actions": _recommended_actions(
+                drivers,
+                is_drop,
+                assessment,
+                financial_impact,
+                query,
+                self.policy.target_gap_recovery_fraction,
+            ),
             "confidence": assessment.confidence,
-            "coverage": 1.0,
+            "coverage": quality["metric_coverage"],
+            "coverage_details": quality,
+            "adjusted_analysis": adjusted,
+            "action_plan": {
+                "potential_financial_impact": round(
+                    financial_impact * self.policy.target_gap_recovery_fraction
+                ),
+                "currency": "IRR",
+                "impact_is_additive": False,
+                "note": "اقدام‌ها مسیرهای جایگزین یا هم‌پوشان برای بازیابی یک ظرفیت مالی مشترک‌اند و اثر آن‌ها قابل جمع نیست.",
+            },
             "period": {
                 "date_from": query.date_from.isoformat(),
                 "date_to": query.date_to.isoformat(),
@@ -247,6 +374,8 @@ class InsightService:
         baseline: dict[str, Any],
         drivers: list[dict[str, Any]],
         dataset_version: str,
+        quality: dict[str, Any],
+        adjusted: dict[str, Any],
     ) -> dict[str, Any]:
         definition = METRICS["success_rate"]
         return {
@@ -284,11 +413,21 @@ class InsightService:
                 "input_records": baseline["input_sessions"],
                 "excluded_records": baseline["excluded_sessions"],
             },
-            "missing_data_coverage": 1.0,
+            "missing_data_coverage": quality["metric_coverage"],
+            "coverage_details": quality,
+            "adjusted_analysis": adjusted,
             "breakdowns": drivers,
             "calculation_id": "success-rate-change-v1",
             "query_parameters": {"merchant_key": query.merchant_key},
             "policy": self.policy.__dict__,
+            "target_policy": {
+                "name": "partial_gap_recovery",
+                "recovery_fraction": self.policy.target_gap_recovery_fraction,
+                "rationale": "هدف میانی محافظه‌کارانه برای برنامه‌ریزی است، نه مقداری استنتاج‌شده از داده.",
+                "configurable": True,
+                "is_data_derived": False,
+                "estimate_is_certain": False,
+            },
         }
 
 
@@ -318,13 +457,40 @@ def _narrative(change: float, drivers: list[dict[str, Any]], is_drop: bool) -> t
     return title, summary
 
 
-def _recommended_actions(drivers: list[dict[str, Any]], is_drop: bool) -> list[dict[str, str]]:
+def _recommended_actions(
+    drivers: list[dict[str, Any]],
+    is_drop: bool,
+    assessment: Any,
+    financial_impact: int,
+    query: InsightQuery,
+    recovery_fraction: float,
+) -> list[dict[str, Any]]:
+    horizon_days = (query.date_to - query.date_from).days + 1
     if not is_drop:
-        return [{"action": "monitor_change", "reason": "پایداری بهبود را در دوره بعد بررسی کنید."}]
+        return [{
+            "action": "monitor_change",
+            "reason": "پایداری بهبود را در یک دوره هم‌اندازه بررسی کنید.",
+            "target_metric": "success_rate",
+            "target_value": assessment.current_rate,
+            "horizon_days": horizon_days,
+            "potential_financial_impact": 0,
+            "currency": "IRR",
+        }]
+    target_rate = assessment.current_rate + (
+        assessment.baseline_rate - assessment.current_rate
+    ) * recovery_fraction
+    recoverable_impact = round(financial_impact * recovery_fraction)
     actions = [
         {
             "action": "inspect_payment_failures",
-            "reason": "کدهای خطا و مسیر پرداخت در بازه افت را بررسی کنید.",
+            "reason": "با رفع خطاهای پرتکرار، نیمی از شکاف نرخ موفقیت تا خط پایه بازیابی شود.",
+            "target_metric": "success_rate",
+            "target_value": target_rate,
+            "horizon_days": horizon_days,
+            "potential_financial_impact": recoverable_impact,
+            "impact_scope": "shared_action_plan_capacity",
+            "impact_is_additive": False,
+            "currency": "IRR",
         }
     ]
     if drivers:
@@ -332,6 +498,15 @@ def _recommended_actions(drivers: list[dict[str, Any]], is_drop: bool) -> list[d
             {
                 "action": "review_driver_segment",
                 "reason": f"بخش {drivers[0]['dimension']}={drivers[0]['value']} بیشترین ارتباط عددی را با افت دارد.",
+                "target_metric": "segment_success_rate",
+                "target_value": drivers[0]["current_rate"] + (
+                    drivers[0]["baseline_rate"] - drivers[0]["current_rate"]
+                ) * 0.5,
+                "horizon_days": horizon_days,
+                "potential_financial_impact": 0,
+                "impact_scope": "overlaps_with_action_plan_capacity",
+                "impact_is_additive": False,
+                "currency": "IRR",
             }
         )
     return actions

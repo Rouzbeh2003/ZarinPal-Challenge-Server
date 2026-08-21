@@ -3,13 +3,18 @@ import { navigationSections } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth";
 
 type SidebarProps = {
   currentPath: string;
   onNavigate: (path: string) => void;
+  onOpenSettings: () => void;
 };
 
-export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
+export function Sidebar({ currentPath, onNavigate, onOpenSettings }: SidebarProps) {
+  const { authState, logout } = useAuth();
+  const isSigningOut = authState.status === "signing-out";
+
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto p-4">
       <a
@@ -25,7 +30,7 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       </a>
 
       <nav aria-label="ناوبری اصلی" className="flex flex-col gap-6">
-        {navigationSections.map((section) => (
+        {navigationSections.filter((section) => section.title !== "مدیریت" || (authState.status === "ready" && authState.isSuperuser)).map((section) => (
           <div key={section.title} className="flex flex-col gap-1">
             <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{section.title}</p>
             {section.items.map((item) => {
@@ -58,17 +63,30 @@ export function Sidebar({ currentPath, onNavigate }: SidebarProps) {
       </nav>
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4">
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2">
-          <span className="text-xs text-muted-foreground">داده نمایشی</span>
-          <Badge variant="outline">نسخه ۰.۱</Badge>
+        <div className="flex items-center justify-center rounded-lg bg-muted/50 px-3 py-2">
+          <Badge variant="outline" className="px-4 py-1.5 text-sm font-semibold">نسخه ۳.۱</Badge>
         </div>
-        <Button variant="ghost" className="justify-start gap-2 text-muted-foreground">
+        <Button
+          variant="ghost"
+          className="justify-start gap-2 text-muted-foreground"
+          onClick={onOpenSettings}
+          aria-haspopup="dialog"
+        >
           <Settings aria-hidden="true" className="size-4" />
           تنظیمات
         </Button>
-        <Button variant="ghost" className="justify-start gap-2 text-muted-foreground">
-          <LogOut aria-hidden="true" className="size-4" />
-          خروج
+        <Button
+          variant="ghost"
+          className="justify-start gap-2 text-muted-foreground hover:text-red-300"
+          onClick={() => void logout()}
+          disabled={isSigningOut}
+        >
+          {isSigningOut ? (
+            <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-current/30 border-t-current" />
+          ) : (
+            <LogOut aria-hidden="true" className="size-4" />
+          )}
+          {isSigningOut ? "در حال خروج..." : "خروج"}
         </Button>
       </div>
     </div>
