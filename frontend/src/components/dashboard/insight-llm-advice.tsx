@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { LoaderCircle, Sparkles } from "lucide-react";
 import type { AdvisorNarrative, AdvisorResponse, Insight } from "@/api/types";
-import { getAdvisor } from "@/api/adapter";
+import { streamAdvisor } from "@/api/adapter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -11,7 +11,7 @@ type InsightLlmAdviceProps = {
 
 type AdviceState =
   | { status: "idle" }
-  | { status: "loading" }
+  | { status: "loading"; preview: string }
   | { status: "error"; message: string }
   | { status: "ready"; narrative: AdvisorNarrative; source: AdvisorResponse["narrative_source"] };
 
@@ -90,22 +90,27 @@ export function InsightLlmAdvice({ insight }: InsightLlmAdviceProps) {
   };
 
   const fetchAdvice = useCallback(async () => {
-    setAdviceState({ status: "loading" });
+    setAdviceState({ status: "loading", preview: "" });
     try {
-      const advisor = await getAdvisor(
+      let streamedContent = "";
+      const advisor = await streamAdvisor(
         insight.merchantKey,
         insight.period.dateFrom.slice(0, 10),
         insight.period.dateTo.slice(0, 10),
         buildQuestion(),
+        (delta) => {
+          streamedContent += delta;
+          setAdviceState({ status: "loading", preview: extractStreamingAnswer(streamedContent) });
+        },
       );
-      if (advisor.advisor_narrative === null) {
+      if (advisor.narrative === null) {
         setAdviceState({
           status: "error",
           message: "مدل زبانی پاسخ نداد (fallback قطعی استفاده شد). VPN را بررسی کنید یا دوباره تلاش کنید.",
         });
         return;
       }
-      setAdviceState({ status: "ready", narrative: advisor.advisor_narrative, source: advisor.narrative_source });
+      setAdviceState({ status: "ready", narrative: advisor.narrative, source: advisor.source });
     } catch (error) {
       setAdviceState({ status: "error", message: error instanceof Error ? error.message : "خطای ناشناخته" });
     }
@@ -133,6 +138,13 @@ export function InsightLlmAdvice({ insight }: InsightLlmAdviceProps) {
       {adviceState.status === "error" && (
         <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs leading-5 text-destructive">
           {adviceState.message}
+        </p>
+      )}
+
+      {adviceState.status === "loading" && adviceState.preview && (
+        <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm leading-7">
+          {adviceState.preview}
+          <span className="mr-1 inline-block h-4 w-0.5 animate-pulse bg-primary align-middle" />
         </p>
       )}
 
@@ -191,4 +203,29 @@ export function InsightLlmAdvice({ insight }: InsightLlmAdviceProps) {
       )}
     </div>
   );
+}
+
+/** متن فیلد answer را حتی پیش از کامل‌شدن JSON مدل برای نمایش زنده استخراج می‌کند. */
+function extractStreamingAnswer(content: string): string {
+  const marker = '"answer"';
+  const markerIndex = content.indexOf(marker);
+  if (markerIndex < 0) return "";
+  const colonIndex = content.indexOf(":", markerIndex + marker.length);
+  const quoteIndex = content.indexOf('"', colonIndex + 1);
+  if (colonIndex < 0 || quoteIndex < 0) return "";
+  let result = "";
+  let escaped = false;
+  for (const character of content.slice(quoteIndex + 1)) {
+    if (escaped) {
+      result += character === "n" ? "\n" : character;
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === '"') {
+      break;
+    } else {
+      result += character;
+    }
+  }
+  return result;
 }

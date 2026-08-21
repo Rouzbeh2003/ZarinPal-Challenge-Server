@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterator
 from typing import Any
 from urllib import request
 
@@ -40,8 +41,18 @@ class OpenAiCompatibleNarrativeGenerator:
         self.timeout_seconds = timeout_seconds
 
     def generate(self, *, question: str | None, evidence: dict[str, Any]) -> dict[str, Any]:
+        content = "".join(self.generate_stream(question=question, evidence=evidence))
+        if not content:
+            raise ValueError("LLM response does not contain message content")
+        return _validate_narrative(json.loads(content))
+
+    def generate_stream(
+        self, *, question: str | None, evidence: dict[str, Any]
+    ) -> Iterator[str]:
+        """Yield content deltas from an OpenAI-compatible SSE response."""
         payload = {
             "model": self.model,
+            "stream": True,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
             "messages": [
@@ -69,11 +80,24 @@ class OpenAiCompatibleNarrativeGenerator:
             method="POST",
         )
         with request.urlopen(http_request, timeout=self.timeout_seconds) as response:  # noqa: S310
-            result = json.loads(response.read().decode("utf-8"))
-        try:
-            content = result["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as error:
-            raise ValueError("LLM response does not contain message content") from error
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    choices = chunk.get("choices", [])
+                    content = choices[0]["delta"].get("content") if choices else None
+                except (json.JSONDecodeError, AttributeError, KeyError, TypeError) as error:
+                    raise ValueError("LLM stream contains an invalid chunk") from error
+                if content:
+                    yield content
+
+    @staticmethod
+    def validate_streamed_content(content: str) -> dict[str, Any]:
         return _validate_narrative(json.loads(content))
 
 

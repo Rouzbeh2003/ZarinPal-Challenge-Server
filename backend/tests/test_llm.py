@@ -16,8 +16,15 @@ class FakeResponse:
     def __exit__(self, *args: object) -> None:
         return None
 
-    def read(self) -> bytes:
-        return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
+    def __iter__(self):
+        choices = self.body.get("choices", [])
+        content = choices[0].get("message", {}).get("content") if choices else None
+        if content is None:
+            yield b'data: {"choices": []}\n'
+        else:
+            chunk = {"choices": [{"delta": {"content": content}}]}
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n".encode()
+        yield b"data: [DONE]\n"
 
 
 def _generator() -> OpenAiCompatibleNarrativeGenerator:
@@ -52,6 +59,7 @@ def test_generator_prioritizes_user_question_and_validates_response() -> None:
     user_message = json.loads(sent["messages"][1]["content"])
     assert user_message["question"] == "مهم‌ترین اقدام چیست؟"
     assert sent["reasoning_effort"] == "none"
+    assert sent["stream"] is True
     assert "temperature" not in sent
     assert "پرسش کاربر هدف اصلی است" in sent["messages"][0]["content"]
 
