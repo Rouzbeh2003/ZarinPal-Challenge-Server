@@ -381,9 +381,17 @@ def merchant_advisor_stream(
                 content += delta
                 yield json.dumps({"type": "delta", "content": delta}, ensure_ascii=False) + "\n"
             narrative = generator.validate_streamed_content(content)
+            report["advisor_narrative"] = narrative
+            report["narrative_source"] = "llm"
             yield json.dumps(
-                {"type": "complete", "narrative": narrative, "source": "llm"},
+                {
+                    "type": "complete",
+                    "narrative": narrative,
+                    "source": "llm",
+                    "advisor": report,
+                },
                 ensure_ascii=False,
+                default=str,
             ) + "\n"
         except (OSError, TimeoutError, ValueError, json.JSONDecodeError) as error:
             yield json.dumps({"type": "error", "message": str(error)}, ensure_ascii=False) + "\n"

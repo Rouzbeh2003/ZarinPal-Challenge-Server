@@ -682,7 +682,7 @@ export async function streamAdvisor(
   dateTo: string,
   question: string,
   onDelta: (content: string) => void,
-): Promise<{ narrative: AdvisorResponse["advisor_narrative"]; source: AdvisorResponse["narrative_source"] }> {
+): Promise<{ narrative: AdvisorResponse["advisor_narrative"]; source: AdvisorResponse["narrative_source"]; advisor?: AdvisorResponse }> {
   const doFetch = (): Promise<Response> => fetch(`${API_BASE}/merchants/${merchantKey}/advisor/stream`, {
     method: "POST",
     headers: {
@@ -706,10 +706,10 @@ export async function streamAdvisor(
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.trim()) continue;
-      const event = JSON.parse(line) as { type: string; content?: string; message?: string; narrative?: AdvisorResponse["advisor_narrative"]; source?: AdvisorResponse["narrative_source"] };
+      const event = JSON.parse(line) as { type: string; content?: string; message?: string; narrative?: AdvisorResponse["advisor_narrative"]; source?: AdvisorResponse["narrative_source"]; advisor?: AdvisorResponse };
       if (event.type === "delta" && event.content) onDelta(event.content);
       if (event.type === "error") throw new Error(event.message ?? "پاسخ مدل زبانی نامعتبر است");
-      if (event.type === "complete") return { narrative: event.narrative ?? null, source: event.source ?? "llm" };
+      if (event.type === "complete") return { narrative: event.narrative ?? null, source: event.source ?? "llm", advisor: event.advisor };
     }
     if (done) break;
   }

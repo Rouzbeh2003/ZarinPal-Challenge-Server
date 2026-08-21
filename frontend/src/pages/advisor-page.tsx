@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bot, ChartNoAxesCombined, ChevronLeft, ChevronRight, Database, ListChecks, MessageCircleQuestion, Sparkles, Target } from "lucide-react";
 import type { AdvisorNarrativeAction, AdvisorNarrativeNeed, AdvisorResponse, AdvisorTransactionEvidence } from "@/api/types";
-import { getAdvisor, getAdvisorEvidence } from "@/api/adapter";
+import { getAdvisorEvidence, streamAdvisor } from "@/api/adapter";
 import { resolveDateRange, useGlobalFilters } from "@/lib/global-filters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { DataState } from "@/components/ui/data-state";
 
 type LoadState =
   | { status: "idle" }
-  | { status: "loading" }
+  | { status: "loading"; preview: string }
   | { status: "error"; message: string }
   | { status: "ready"; advisor: AdvisorResponse };
 
@@ -27,11 +27,22 @@ export function AdvisorPage() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "idle" });
 
   const runAdvisor = useCallback(async () => {
-    setLoadState({ status: "loading" });
+    setLoadState({ status: "loading", preview: "" });
     try {
       const range = resolveDateRange(dateRangePreset);
-      const advisor = await getAdvisor(merchantKey, range.dateFrom, range.dateTo, question.trim() || "");
-      setLoadState({ status: "ready", advisor });
+      let streamedContent = "";
+      const result = await streamAdvisor(
+        merchantKey,
+        range.dateFrom,
+        range.dateTo,
+        question.trim() || "",
+        (delta) => {
+          streamedContent += delta;
+          setLoadState({ status: "loading", preview: extractStreamingAnswer(streamedContent) });
+        },
+      );
+      if (!result.advisor) throw new Error("پاسخ کامل مشاور دریافت نشد.");
+      setLoadState({ status: "ready", advisor: result.advisor });
     } catch (error) {
       setLoadState({ status: "error", message: error instanceof Error ? error.message : "خطای ناشناخته" });
     }
@@ -75,6 +86,21 @@ export function AdvisorPage() {
           actionLabel="تلاش دوباره"
           onAction={() => void runAdvisor()}
         />
+      )}
+
+      {loadState.status === "loading" && loadState.preview && (
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Sparkles aria-hidden="true" className="size-4 text-primary" />
+              روایت مشاور در حال تولید
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm leading-7">
+            {loadState.preview}
+            <span className="mr-1 inline-block h-4 w-0.5 animate-pulse bg-primary align-middle" />
+          </CardContent>
+        </Card>
       )}
 
       {loadState.status === "ready" && (
@@ -440,4 +466,23 @@ function formatChange(value: number | null): string {
   if (value === null) return "داده ناکافی";
   const sign = value > 0 ? "+" : "";
   return `${sign}${(value * 100).toLocaleString("fa-IR", { maximumFractionDigits: 1 })}٪`;
+}
+
+function extractStreamingAnswer(content: string): string {
+  const markerIndex = content.indexOf('"answer"');
+  if (markerIndex < 0) return "";
+  const colonIndex = content.indexOf(":", markerIndex + 8);
+  const quoteIndex = content.indexOf('"', colonIndex + 1);
+  if (colonIndex < 0 || quoteIndex < 0) return "";
+  let answer = "";
+  let escaped = false;
+  for (const character of content.slice(quoteIndex + 1)) {
+    if (escaped) {
+      answer += character === "n" ? "\n" : character;
+      escaped = false;
+    } else if (character === "\\") escaped = true;
+    else if (character === '"') break;
+    else answer += character;
+  }
+  return answer;
 }
