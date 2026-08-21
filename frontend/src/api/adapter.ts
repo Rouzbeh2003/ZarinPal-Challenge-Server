@@ -676,6 +676,46 @@ export async function getTrace(_params: QueryParams = {}): Promise<Trace> {
   throw new Error("Trace عمومی بدون insight در دسترس نیست؛ از مسیر بینش استفاده کنید.");
 }
 
+export async function streamAdvisor(
+  merchantKey: string,
+  dateFrom: string,
+  dateTo: string,
+  question: string,
+  onDelta: (content: string) => void,
+): Promise<{ narrative: AdvisorResponse["advisor_narrative"]; source: AdvisorResponse["narrative_source"] }> {
+  const doFetch = (): Promise<Response> => fetch(`${API_BASE}/merchants/${merchantKey}/advisor/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    credentials: "include",
+    body: JSON.stringify({ date_from: dateFrom, date_to: dateTo, timezone: "Asia/Tehran", question }),
+  });
+  let response = await doFetch();
+  if (response.status === 401 && (await refreshAccessToken())) response = await doFetch();
+  if (!response.ok || !response.body) throw new Error(`خطای سرویس (${response.status})`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as { type: string; content?: string; message?: string; narrative?: AdvisorResponse["advisor_narrative"]; source?: AdvisorResponse["narrative_source"] };
+      if (event.type === "delta" && event.content) onDelta(event.content);
+      if (event.type === "error") throw new Error(event.message ?? "پاسخ مدل زبانی نامعتبر است");
+      if (event.type === "complete") return { narrative: event.narrative ?? null, source: event.source ?? "llm" };
+    }
+    if (done) break;
+  }
+  throw new Error("جریان پاسخ پیش از تکمیل قطع شد");
+}
+
 export async function getAdvisorEvidence(
   merchantKey: string,
   dateFrom: string,

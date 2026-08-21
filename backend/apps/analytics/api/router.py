@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
@@ -6,7 +7,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connection, transaction
-from django.http import HttpRequest
+from django.http import HttpRequest, StreamingHttpResponse
 from django.utils import timezone
 from ninja import Query, Router
 from ninja.errors import HttpError
@@ -331,6 +332,66 @@ def merchant_advisor(
             peer_merchant_keys=tuple(peer_keys),
         )
     )
+
+
+@router.post("/merchants/{merchant_key}/advisor/stream", auth=jwt_auth)
+def merchant_advisor_stream(
+    request: HttpRequest, merchant_key: str, payload: AdvisorRequest
+) -> StreamingHttpResponse:
+    """Stream LLM JSON deltas as NDJSON, followed by the validated narrative."""
+    _require_merchant_access(request, merchant_key)
+    merchant = Merchant.objects.get(merchant_key=merchant_key, is_active=True)
+    peer_keys = list(
+        Merchant.objects.filter(is_active=True, category_id=merchant.category_id)
+        .exclude(merchant_key=merchant_key)
+        .values_list("merchant_key", flat=True)
+    ) if merchant.category_id else []
+    query = AdvisorQuery(
+        merchant_key=merchant_key,
+        date_from=payload.date_from,
+        date_to=payload.date_to,
+        question=payload.question,
+        terminal_key=payload.terminal_key,
+        psp_code=payload.psp_code,
+        issuer_bank_code=payload.issuer_bank_code,
+        amount_bucket=payload.amount_bucket,
+        category_id=merchant.category_id,
+        category_title=merchant.category_title,
+        peer_merchant_keys=tuple(peer_keys),
+    )
+
+    def events() -> Any:
+        if not (settings.LLM_API_URL and settings.LLM_API_KEY and settings.LLM_MODEL):
+            yield json.dumps({"type": "error", "message": "LLM is not configured"}) + "\n"
+            return
+        report = MerchantAdvisorService().analyze(query)
+        evidence = {
+            key: report[key]
+            for key in ("overview", "retry", "dimensions", "trends", "peer_comparison", "predicted_needs", "recommendations")
+        }
+        generator = OpenAiCompatibleNarrativeGenerator(
+            api_url=settings.LLM_API_URL,
+            api_key=settings.LLM_API_KEY,
+            model=settings.LLM_MODEL,
+            timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
+        )
+        content = ""
+        try:
+            for delta in generator.generate_stream(question=payload.question, evidence=evidence):
+                content += delta
+                yield json.dumps({"type": "delta", "content": delta}, ensure_ascii=False) + "\n"
+            narrative = generator.validate_streamed_content(content)
+            yield json.dumps(
+                {"type": "complete", "narrative": narrative, "source": "llm"},
+                ensure_ascii=False,
+            ) + "\n"
+        except (OSError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+            yield json.dumps({"type": "error", "message": str(error)}, ensure_ascii=False) + "\n"
+
+    response = StreamingHttpResponse(events(), content_type="application/x-ndjson; charset=utf-8")
+    response["Cache-Control"] = "no-cache, no-transform"
+    response["X-Accel-Buffering"] = "no"
+    return response
 
 
 @router.get(
