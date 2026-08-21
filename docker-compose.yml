@@ -19,12 +19,24 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # The dataset lives at backend/data/raw/other_challenge_data.csv.gz on the
+      # host; single-file bind mounts are unreliable on Windows, so only the
+      # folder is mounted.
       - ./backend/data:/app/data
-      - ./other_challenge_data.csv.gz:/app/data/raw/other_challenge_data.csv.gz:ro
     depends_on:
       postgres:
         condition: service_healthy
-    command: uvicorn config.asgi:application --host 0.0.0.0 --port 8000
+    # Migrations run before uvicorn on every start; they are idempotent.
+    command: >
+      sh -c "uv run python manage.py migrate --noinput &&
+             uvicorn config.asgi:application --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
